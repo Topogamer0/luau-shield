@@ -1,0 +1,77 @@
+# luau-shield configuration
+#
+# luau-shield looks for this file in the checked directory and in each of its
+# parent directories; use --config FILE to pick another one. Command-line
+# flags override the values below. Relative paths are resolved from the
+# directory that contains this file.
+#
+# Full reference: https://github.com/Topogamer0/luau-shield/blob/main/docs/configuration.md
+
+# Lowest severity that is reported: "low" | "medium" | "high" | "critical".
+min-severity = "low"
+
+# Exit with code 1 when a reported finding has at least this severity:
+# "low" | "medium" | "high" | "critical" | "never".
+fail-on = "low"
+
+# Rojo project used to map files to instances (ServerScriptService,
+# ReplicatedStorage, ...). Without it, directory names are used as hints.
+# project = "default.project.json"
+
+# Files and directories to skip, as globs relative to this file.
+# Packages, DevPackages, ServerPackages, node_modules and .git are always skipped.
+ignore = [
+    # "**/*.spec.luau",
+    # "src/dev/**",
+]
+
+# Trust guard functions that cannot be resolved (for example from a package
+# outside the checked tree) when their name starts with is, validate, verify,
+# check, sanitize, assert or ensure.
+trust-unresolved-validators = true
+
+# How many nested calls into local functions and required modules are followed.
+max-call-depth = 6
+
+# Per rule: "off", "on", a severity that replaces the default one
+# ("low" | "medium" | "high" | "critical"), or a table such as
+# { enabled = true, severity = "medium" }.
+[rules]
+# LS001 = "on"    # untrusted-economy-write        (high)
+# LS002 = "on"    # untrusted-instance-property    (high)
+# LS003 = "on"    # unverified-client-instance     (high)
+# LS004 = "on"    # untrusted-code-execution       (critical)
+# LS005 = "on"    # untrusted-http-request         (high)
+# LS006 = "on"    # server-invokes-client          (medium)
+# LS007 = "on"    # remote-without-rate-limit      (low)
+# LS008 = "on"    # client-exposed-secret          (critical)
+
+# Your own validation functions. A sanitizer protects a value when it is used
+# as a guard (`if not Validate.amount(x) then return end`,
+# `assert(Validate.amount(x))`) or through its return value
+# (`local clean = Validate.amount(x)`).
+#
+# [[sanitizers]]
+# function = "Validate.amount"   # callee as written in code; ":" and "." are equivalent, "*" matches one segment
+# checks = "all"                 # or a list: ["type", "lower", "upper", "nan", "allowlist", "pattern",
+#                                #             "length", "ownership", "filtered", "encoded"]
+
+# Functions that must not receive client data.
+#
+# [[sinks]]
+# function = "Economy.addCoins"
+# rule = "LS001"                 # rule the finding is reported under
+# arguments = [2]                # 1-based; default: all arguments ("self" of a ":" call is not counted)
+
+# Functions whose parameters come from the client (Knit "*.Client.*" methods
+# are recognised without configuration).
+#
+# [[sources]]
+# function = "*.Remotes.*"
+# trusted-parameters = 1         # leading parameters (after self) that are trusted, usually the player
+
+# Settings for --explain (a local Ollama server; host from OLLAMA_HOST,
+# default http://localhost:11434).
+[explain]
+model = "qwen2.5-coder:7b"
+timeout-seconds = 60

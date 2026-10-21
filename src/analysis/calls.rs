@@ -184,6 +184,30 @@ fn path_has_stat(path: &str) -> bool {
         .any(|n| *n == "leaderstats" || is_stat_name(n))
 }
 
+/// `data.Inventory` for the target `data.Inventory[itemId]`.
+fn syntactic_base(target: &str) -> &str {
+    if target.ends_with(']') {
+        let mut depth = 0;
+        for (i, c) in target.char_indices().rev() {
+            match c {
+                ']' => depth += 1,
+                '[' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return &target[..i];
+                    }
+                }
+                _ => {}
+            }
+        }
+        return target;
+    }
+    match target.rfind(['.', ':']) {
+        Some(i) => &target[..i],
+        None => target,
+    }
+}
+
 fn path_has_data(path: &str) -> bool {
     path_names(path).iter().any(|n| is_data_container_name(n))
 }
@@ -336,36 +360,36 @@ impl<'a> Analyzer<'a> {
         }
         let fresh = matches!(&base.kind, Kind::Table(t) if t.fresh_frame == Some(frame.id));
         let client_table = base.flows.iter().any(|f| f.raw);
-        let base_path = base.path.as_deref().unwrap_or("");
+        // The container is named by the value's path (`player.leaderstats.Coins`)
+        // and by the code itself (`profile` in `profile[key] = value`).
+        let names = format!(
+            "{} {}",
+            base.path.as_deref().unwrap_or(""),
+            syntactic_base(target)
+        );
         let what = format!("is {verb} `{target}`");
         if !fresh && !client_table {
             match (name, key) {
-                (Some("Value"), _) if path_has_stat(base_path) => {
+                (Some("Value"), _) if path_has_stat(&names) => {
                     self.check_value(RuleId::Ls001, SinkKind::Economy, shown, loc, &what);
                 }
                 (Some(n), _) if is_stat_name(n) && sinks::property_sink(n).is_none() => {
                     self.check_value(RuleId::Ls001, SinkKind::Economy, shown, loc, &what);
                 }
                 (None, Key::Dynamic(key_value, _))
-                    if path_has_data(base_path) || path_has_stat(base_path) =>
+                    if path_has_data(&names) || path_has_stat(&names) =>
                 {
-                    let base_name = base_path.to_string();
+                    let container = syntactic_base(target).to_string();
                     self.check_value(
                         RuleId::Ls001,
                         SinkKind::Economy,
                         key_value,
                         loc,
-                        &format!("chooses which entry of `{base_name}` is written"),
+                        &format!("chooses which entry of `{container}` is written"),
                     );
                     self.check_value(RuleId::Ls001, SinkKind::Economy, shown, loc, &what);
                 }
-                (Some(_), _)
-                    if path_has_data(base_path)
-                        && !matches!(base.kind, Kind::Table(_) | Kind::Unknown)
-                        || (name.is_some()
-                            && path_has_data(base_path)
-                            && !matches!(base.kind, Kind::Obj(_))) =>
-                {
+                (Some(_), _) if path_has_data(&names) && !matches!(base.kind, Kind::Obj(_)) => {
                     self.check_value(RuleId::Ls001, SinkKind::Economy, shown, loc, &what);
                 }
                 _ => {}
@@ -1297,7 +1321,8 @@ impl<'a> Analyzer<'a> {
                 for a in &args {
                     v.add_flows(a.derived().flows);
                 }
-                vec![v]
+                // `string.match` / `string.find` return one value per capture.
+                vec![v.clone(), v.clone(), v.clone(), v]
             }
             Builtin::InstanceNew => {
                 self.note_expensive("`Instance.new`".to_string());
@@ -1545,6 +1570,12 @@ impl<'a> Analyzer<'a> {
                 }
                 result.kind = Kind::Str(None);
                 result.add_flows(recv.derived().flows);
+                if matches!(name, "match" | "find" | "gmatch") {
+                    for arg in &args {
+                        result.add_flows(arg.derived().flows);
+                    }
+                    return vec![result.clone(), result.clone(), result.clone(), result];
+                }
             } else {
                 result.add_flows(recv.derived().flows);
             }

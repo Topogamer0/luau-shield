@@ -311,9 +311,12 @@ pub fn is_stat_name(name: &str) -> bool {
 
 /// Is this identifier the name of a container of persistent player data?
 pub fn is_data_container_name(name: &str) -> bool {
-    identifier_words(name)
-        .iter()
-        .any(|word| DATA_WORDS.contains(&word.as_str()))
+    identifier_words(name).iter().any(|word| {
+        DATA_WORDS.contains(&word.as_str())
+            || word
+                .strip_suffix('s')
+                .is_some_and(|singular| DATA_WORDS.contains(&singular))
+    })
 }
 
 #[cfg(test)]

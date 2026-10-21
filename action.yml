@@ -1,0 +1,349 @@
+# luau-shield GitHub Action
+#
+# Runs luau-shield on a Roblox Luau project, uploads the findings to GitHub
+# code scanning (SARIF) and then fails the job when a finding at or above the
+# `fail-on` severity was reported. The SARIF upload always happens before the
+# job fails, so the alerts are visible in the Security tab and on pull requests.
+#
+# The calling workflow needs these permissions to upload the SARIF report:
+#
+#   permissions:
+#     contents: read
+#     security-events: write   # upload results to code scanning
+#     actions: read            # only needed in private repositories
+#
+# Full documentation: docs/ci.md
+
+name: luau-shield
+description: Find exploitable vulnerabilities in Roblox Luau games with static taint analysis and report them to code scanning.
+author: Topogamer0
+
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  path:
+    description: >-
+      File or directory to check, relative to the workspace. Several paths can
+      be given, one per line.
+    required: false
+    default: "."
+  version:
+    description: >-
+      luau-shield release to install, for example "1.2.0", "v1.2.0" or
+      "latest". When empty: the action's own ref if it is a version tag (v*),
+      otherwise the latest release. Ignored when build-from-source is "true".
+    required: false
+    default: ""
+  build-from-source:
+    description: >-
+      "true" compiles luau-shield from the action's own source with
+      `cargo build --release --locked` instead of downloading a release
+      binary. Needs a Rust toolchain on the runner.
+    required: false
+    default: "false"
+  config:
+    description: >-
+      Path to a luau-shield.toml file (--config). When empty, luau-shield.toml
+      is looked up in the checked directory and its parents.
+    required: false
+    default: ""
+  project:
+    description: Rojo project file used to map files to instances (--project).
+    required: false
+    default: ""
+  min-severity:
+    description: >-
+      Lowest severity that is reported: low, medium, high or critical. Passed
+      as --min-severity, so it takes precedence over min-severity in
+      luau-shield.toml.
+    required: false
+    default: "low"
+  fail-on:
+    description: >-
+      Fail the job when a reported finding has at least this severity: low,
+      medium, high, critical or never. Takes precedence over fail-on in
+      luau-shield.toml. The SARIF report is uploaded before the job fails.
+    required: false
+    default: "high"
+  args:
+    description: >-
+      Extra arguments for both `luau-shield check` runs, separated by
+      whitespace (for example "--disable LS007"). Do not pass --format,
+      --output or --fail-on here.
+    required: false
+    default: ""
+  sarif-file:
+    description: Path of the SARIF report written by the action, relative to the workspace.
+    required: false
+    default: "luau-shield.sarif"
+  upload-sarif:
+    description: >-
+      "true" uploads the SARIF report to GitHub code scanning (needs the
+      security-events: write permission).
+    required: false
+    default: "true"
+  category:
+    description: >-
+      Code scanning category of the uploaded report. Use a different value for
+      each run when the action checks several projects in the same workflow.
+    required: false
+    default: "luau-shield"
+
+outputs:
+  sarif-file:
+    description: Path of the SARIF report written by the action, relative to the workspace.
+    value: ${{ steps.sarif.outputs.sarif-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install luau-shield
+      if: inputs.build-from-source != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        INPUT_VERSION: ${{ inputs.version }}
+        ACTION_REPOSITORY: ${{ github.action_repository }}
+        ACTION_REF: ${{ github.action_ref }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -eo pipefail
+
+        # Converts a path for native Windows programs and GITHUB_PATH.
+        native_path() {
+          if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s\n' "$1"; fi
+        }
+
+        # Release asset for this runner.
+        case "$RUNNER_OS/$RUNNER_ARCH" in
+          Linux/X64) platform="linux-x86_64" ;;
+          macOS/ARM64) platform="macos-aarch64" ;;
+          macOS/X64) platform="macos-x86_64" ;;
+          Windows/X64) platform="windows-x86_64" ;;
+          *)
+            echo "::error title=luau-shield::No prebuilt luau-shield binary for $RUNNER_OS/$RUNNER_ARCH. Use build-from-source: true to compile it with cargo."
+            exit 1
+            ;;
+        esac
+
+        install_dir="$RUNNER_TEMP/luau-shield"
+        if command -v cygpath >/dev/null 2>&1; then
+          install_dir="$(cygpath -u "$install_dir")"
+        fi
+        bin_dir="$install_dir/bin"
+        download_dir="$install_dir/download"
+        rm -rf "$download_dir"
+        mkdir -p "$bin_dir" "$download_dir"
+
+        # Repository and ref this action was used from. github.action_repository
+        # is empty for a local action (uses: ./) and in some nested composite
+        # actions; the action checkout path (<work>/_actions/<owner>/<repo>/<ref>)
+        # tells the same thing.
+        repo="$ACTION_REPOSITORY"
+        ref="$ACTION_REF"
+        if [ -z "$repo" ]; then
+          action_path="$(printf '%s' "$ACTION_PATH" | tr '\\' '/')"
+          case "$action_path" in
+            */_actions/*/*/*)
+              rest="${action_path#*/_actions/}"
+              repo="$(printf '%s' "$rest" | cut -d/ -f1-2)"
+              ref="$(printf '%s' "$rest" | cut -d/ -f3-)"
+              ;;
+          esac
+        fi
+        repo="${repo:-Topogamer0/luau-shield}"
+
+        # Which release to install.
+        tag=""
+        case "$INPUT_VERSION" in
+          "")
+            if printf '%s' "$ref" | grep -Eq '^v[0-9]'; then tag="$ref"; fi
+            ;;
+          latest) ;;
+          v*) tag="$INPUT_VERSION" ;;
+          *) tag="v$INPUT_VERSION" ;;
+        esac
+        requested="${tag:-latest}"
+
+        if [ -z "$tag" ]; then
+          if ! tag="$(gh release view --repo "$repo" --json tagName --jq .tagName)"; then
+            echo "::error title=luau-shield::Could not find the latest luau-shield release of $repo."
+            exit 1
+          fi
+        elif ! gh release view "$tag" --repo "$repo" --json tagName >/dev/null 2>&1; then
+          # A floating tag such as v1 or v1.2 has no release of its own:
+          # use the newest stable release of that series.
+          resolved=""
+          if printf '%s' "$tag" | grep -Eq '^v[0-9]+(\.[0-9]+)?$'; then
+            resolved="$(gh release list --repo "$repo" --exclude-drafts --exclude-pre-releases --limit 100 \
+              --json tagName --jq "map(.tagName | select(startswith(\"$tag.\"))) | first // empty")"
+          fi
+          if [ -z "$resolved" ]; then
+            echo "::error title=luau-shield::No luau-shield release matches '$requested' in $repo. Set the 'version' input to an existing release, or use build-from-source: true."
+            exit 1
+          fi
+          tag="$resolved"
+        fi
+
+        version="${tag#v}"
+        asset="luau-shield-${version}-${platform}.zip"
+        echo "Installing luau-shield $tag ($platform) from $repo"
+        gh release download "$tag" --repo "$repo" --dir "$download_dir" \
+          --pattern "$asset" --pattern "$asset.sha256"
+
+        zip_file="$download_dir/$asset"
+        if [ ! -f "$zip_file" ]; then
+          echo "::error title=luau-shield::Release $tag of $repo has no $asset asset."
+          exit 1
+        fi
+        if [ -f "$zip_file.sha256" ]; then
+          expected="$(awk '{ print tolower($1); exit }' "$zip_file.sha256")"
+          if command -v sha256sum >/dev/null 2>&1; then
+            actual="$(sha256sum "$zip_file" | awk '{ print tolower($1) }')"
+          else
+            actual="$(shasum -a 256 "$zip_file" | awk '{ print tolower($1) }')"
+          fi
+          if [ "$expected" != "$actual" ]; then
+            echo "::error title=luau-shield::Checksum mismatch for $asset (expected $expected, got $actual)."
+            exit 1
+          fi
+        else
+          echo "::warning title=luau-shield::Release $tag has no $asset.sha256; the download was not verified."
+        fi
+
+        if command -v unzip >/dev/null 2>&1; then
+          unzip -o -q "$zip_file" -d "$bin_dir"
+        else
+          7z x -y -bd "-o$(native_path "$bin_dir")" "$(native_path "$zip_file")" >/dev/null
+        fi
+
+        exe="$bin_dir/luau-shield"
+        if [ "$RUNNER_OS" = "Windows" ]; then exe="$exe.exe"; fi
+        if [ ! -f "$exe" ]; then
+          echo "::error title=luau-shield::$asset does not contain $(basename "$exe")."
+          exit 1
+        fi
+        chmod +x "$exe" 2>/dev/null || true
+        native_path "$bin_dir" >> "$GITHUB_PATH"
+
+    - name: Build luau-shield from source
+      if: inputs.build-from-source == 'true'
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        set -eo pipefail
+
+        native_path() {
+          if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s\n' "$1"; fi
+        }
+
+        if ! command -v cargo >/dev/null 2>&1; then
+          echo "::error title=luau-shield::build-from-source needs cargo on the runner (for example with dtolnay/rust-toolchain)."
+          exit 1
+        fi
+
+        # An explicit target directory keeps the binary location independent
+        # of CARGO_TARGET_DIR.
+        cargo build --release --locked --target-dir target
+
+        install_dir="$RUNNER_TEMP/luau-shield"
+        if command -v cygpath >/dev/null 2>&1; then
+          install_dir="$(cygpath -u "$install_dir")"
+        fi
+        bin_dir="$install_dir/bin"
+        mkdir -p "$bin_dir"
+
+        exe="luau-shield"
+        if [ "$RUNNER_OS" = "Windows" ]; then exe="luau-shield.exe"; fi
+        cp "target/release/$exe" "$bin_dir/$exe"
+        native_path "$bin_dir" >> "$GITHUB_PATH"
+
+    - name: Run luau-shield (SARIF report)
+      id: sarif
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_PROJECT: ${{ inputs.project }}
+        INPUT_MIN_SEVERITY: ${{ inputs.min-severity }}
+        INPUT_ARGS: ${{ inputs.args }}
+        INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
+      run: |
+        set -eo pipefail
+
+        # The arguments shared by both runs are stored NUL-separated so that
+        # the final step uses exactly the same ones.
+        args_file="$RUNNER_TEMP/luau-shield-args"
+        if command -v cygpath >/dev/null 2>&1; then args_file="$(cygpath -u "$args_file")"; fi
+        : > "$args_file"
+        add_arg() {
+          for arg in "$@"; do printf '%s\0' "$arg" >> "$args_file"; done
+        }
+
+        if [ -n "$INPUT_CONFIG" ]; then add_arg --config "$INPUT_CONFIG"; fi
+        if [ -n "$INPUT_PROJECT" ]; then add_arg --project "$INPUT_PROJECT"; fi
+        add_arg --min-severity "${INPUT_MIN_SEVERITY:-low}"
+        if [ -n "$INPUT_ARGS" ]; then
+          set -f
+          # shellcheck disable=SC2206 # split on whitespace on purpose
+          extra=($INPUT_ARGS)
+          set +f
+          add_arg "${extra[@]}"
+        fi
+
+        path_count=0
+        while IFS= read -r line || [ -n "$line" ]; do
+          line="${line#"${line%%[![:space:]]*}"}"
+          line="${line%"${line##*[![:space:]]}"}"
+          if [ -n "$line" ]; then
+            add_arg "$line"
+            path_count=$((path_count + 1))
+          fi
+        done <<EOF
+        $INPUT_PATH
+        EOF
+        if [ "$path_count" -eq 0 ]; then add_arg .; fi
+
+        args=()
+        while IFS= read -r -d '' arg; do args+=("$arg"); done < "$args_file"
+
+        case "$INPUT_SARIF_FILE" in
+          */*) mkdir -p "${INPUT_SARIF_FILE%/*}" ;;
+        esac
+
+        luau-shield check "${args[@]}" --format sarif --output "$INPUT_SARIF_FILE" --fail-on never
+        echo "sarif-file=$INPUT_SARIF_FILE" >> "$GITHUB_OUTPUT"
+
+    - name: Upload SARIF to code scanning
+      if: inputs.upload-sarif == 'true'
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.sarif.outputs.sarif-file }}
+        category: ${{ inputs.category }}
+
+    - name: Check findings
+      shell: bash
+      env:
+        INPUT_ARGS: ${{ inputs.args }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        set -eo pipefail
+
+        args_file="$RUNNER_TEMP/luau-shield-args"
+        if command -v cygpath >/dev/null 2>&1; then args_file="$(cygpath -u "$args_file")"; fi
+        args=()
+        while IFS= read -r -d '' arg; do args+=("$arg"); done < "$args_file"
+
+        color=(--color always)
+        case " $INPUT_ARGS " in
+          *" --color"*) color=() ;;
+        esac
+
+        status=0
+        luau-shield check "${args[@]}" "${color[@]}" --format text --fail-on "${INPUT_FAIL_ON:-high}" || status=$?
+        if [ "$status" -eq 1 ]; then
+          echo "::error title=luau-shield::luau-shield reported findings at or above the '${INPUT_FAIL_ON:-high}' severity."
+        fi
+        exit "$status"

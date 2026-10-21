@@ -1,0 +1,2025 @@
+---
+source: tests/snapshots.rs
+expression: sarif
+---
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "invocations": [
+        {
+          "executionSuccessful": true,
+          "toolExecutionNotifications": []
+        }
+      ],
+      "results": [
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`source` (parameter #3) of the `Remotes.AdminCommand.OnServerEvent` handler is sent by the client (the type annotation `string` is not checked at runtime)"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/AdminConsole.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 87,
+                            "startLine": 18
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`source` (client-controlled) is executed as code by `loadstring`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/AdminConsole.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 21,
+                            "startLine": 23
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/AdminConsole.server.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 39,
+                  "endLine": 23,
+                  "startColumn": 21,
+                  "startLine": 23
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "`source` (client-controlled) is executed as code by `loadstring`. Only an allow-list can make code execution safe. Never run code or require modules chosen by the client. Dispatch commands through a server-side table of allowed functions (`Commands[name]`) and validate the name against it."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "150ef2f814ffe654"
+          },
+          "properties": {
+            "severity": "critical"
+          },
+          "ruleId": "LS004",
+          "ruleIndex": 3
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`message` is the chat message typed by the player"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/AdminConsole.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 34,
+                            "startLine": 33
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "assigned to `argument`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/AdminConsole.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 18,
+                            "startLine": 37
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`message` (client-controlled) is passed to `require`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/AdminConsole.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 19,
+                            "startLine": 39
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/AdminConsole.server.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 46,
+                  "endLine": 39,
+                  "startColumn": 19,
+                  "startLine": 39
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "`message` (client-controlled) is passed to `require`. Only an allow-list can make code execution safe. Never run code or require modules chosen by the client. Dispatch commands through a server-side table of allowed functions (`Commands[name]`) and validate the name against it."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "fcaa188840521e4c"
+          },
+          "properties": {
+            "severity": "critical"
+          },
+          "ruleId": "LS004",
+          "ruleIndex": 3
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`damage` (parameter #3) of the `Remotes.SwingSword.OnServerEvent` handler is sent by the client (the type annotation `number` is not checked at runtime)"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/CombatService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 85,
+                            "startLine": 22
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`damage` (client-controlled) is passed to `target:TakeDamage()`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/CombatService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 9,
+                            "startLine": 30
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/CombatService.server.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 27,
+                  "endLine": 30,
+                  "startColumn": 9,
+                  "startLine": 30
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "`damage` (client-controlled) is passed to `target:TakeDamage()`. Missing: a lower bound and an upper bound (or a distance check against the character). Compute the value on the server (from server-side stats, the character's real position, etc.). If it must come from the client, clamp it to a sensible range, check distances against the character, allow-list instances, and filter text with TextService."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "b10ffc9be9cbece2"
+          },
+          "properties": {
+            "severity": "high"
+          },
+          "ruleId": "LS002",
+          "ruleIndex": 1
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`target` (parameter #2) of the `Remotes.SwingSword.OnServerEvent` handler is sent by the client (the type annotation `Humanoid` is not checked at runtime)"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/CombatService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 67,
+                            "startLine": 22
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`target:TakeDamage()` is called on `target`, an Instance chosen by the client"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/CombatService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 9,
+                            "startLine": 30
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/CombatService.server.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 27,
+                  "endLine": 30,
+                  "startColumn": 9,
+                  "startLine": 30
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "`target:TakeDamage()` is called on `target`, an Instance chosen by the client. A type check such as `IsA` only proves what kind of object it is, not that the player owns it or may use it. Verify ownership or location before using the Instance: `inst:IsDescendantOf(player.Character)`, compare an `Owner` attribute with `player.UserId`, check the distance to the character, or look it up in a server-side list of allowed instances."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "7010065a04b60dc0"
+          },
+          "properties": {
+            "severity": "high"
+          },
+          "ruleId": "LS003",
+          "ruleIndex": 2
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`speed` (parameter #2) of the `Remotes.Sprint.OnServerEvent` handler is sent by the client (the type annotation `number` is not checked at runtime)"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/CombatService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 63,
+                            "startLine": 33
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`speed` (client-controlled) is assigned to `humanoid.WalkSpeed`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/CombatService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 3,
+                            "startLine": 36
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/CombatService.server.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 21,
+                  "endLine": 36,
+                  "startColumn": 3,
+                  "startLine": 36
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "`speed` (client-controlled) is assigned to `humanoid.WalkSpeed`. Missing: a lower bound and an upper bound (or a distance check against the character). Compute the value on the server (from server-side stats, the character's real position, etc.). If it must come from the client, clamp it to a sensible range, check distances against the character, allow-list instances, and filter text with TextService."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "3636e4a7a1f3b151"
+          },
+          "properties": {
+            "severity": "high"
+          },
+          "ruleId": "LS002",
+          "ruleIndex": 1
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`targetPosition` (parameter #2) of the `Remotes.Blink.OnServerEvent` handler is sent by the client (the type annotation `Vector3` is not checked at runtime)"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/CombatService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 62,
+                            "startLine": 41
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`targetPosition` (client-controlled) is assigned to `root.CFrame`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/CombatService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 2,
+                            "startLine": 48
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/CombatService.server.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 13,
+                  "endLine": 48,
+                  "startColumn": 2,
+                  "startLine": 48
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "`targetPosition` (client-controlled) is assigned to `root.CFrame`. Missing: a lower bound and an upper bound (or a distance check against the character). Compute the value on the server (from server-side stats, the character's real position, etc.). If it must come from the client, clamp it to a sensible range, check distances against the character, allow-list instances, and filter text with TextService."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "c70eaa7056e696de"
+          },
+          "properties": {
+            "severity": "high"
+          },
+          "ruleId": "LS002",
+          "ruleIndex": 1
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/LobbyService.server.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 5,
+                  "endLine": 31,
+                  "startColumn": 38,
+                  "startLine": 15
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "the `Remotes.LaunchFirework.OnServerEvent` handler calls `Instance.new`, `effect:Clone()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "69b8352cb3b6767c"
+          },
+          "properties": {
+            "severity": "low"
+          },
+          "ruleId": "LS007",
+          "ruleIndex": 6
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/LobbyService.server.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 5,
+                  "endLine": 35,
+                  "startColumn": 39,
+                  "startLine": 33
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "the `Remotes.SubmitBugReport.OnServerEvent` handler calls `HttpService:PostAsync()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "8c6da9cfb3487e5a"
+          },
+          "properties": {
+            "severity": "low"
+          },
+          "ruleId": "LS007",
+          "ruleIndex": 6
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/LobbyService.server.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 5,
+                  "endLine": 39,
+                  "startColumn": 34,
+                  "startLine": 37
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "the `Remotes.TrackEvent.OnServerEvent` handler calls `HttpService:PostAsync()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "efb5e53dabe001f9"
+          },
+          "properties": {
+            "severity": "low"
+          },
+          "ruleId": "LS007",
+          "ruleIndex": 6
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`eventName` (parameter #2) of the `Remotes.TrackEvent.OnServerEvent` handler is sent by the client (the type annotation `string` is not checked at runtime)"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/LobbyService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 67,
+                            "startLine": 37
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "passed to `Analytics.track` as `eventName`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/LobbyService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 2,
+                            "startLine": 38
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "assigned to `url`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/Modules/Analytics.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 8,
+                            "startLine": 14
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`url` (client-controlled, from `eventName`) is used in the URL of `HttpService:PostAsync()`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/Modules/Analytics.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 14,
+                            "startLine": 19
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/Modules/Analytics.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 72,
+                  "endLine": 19,
+                  "startColumn": 14,
+                  "startLine": 19
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "`url` (client-controlled, from `eventName`) is used in the URL of `HttpService:PostAsync()`. The value is not allow-listed, matched against a strict pattern, converted with tonumber or encoded with HttpService:UrlEncode. Keep URLs on the server and choose them through an allow-listed key. Encode client values with `HttpService:UrlEncode`, convert ids with `tonumber`, limit the length of text and rate-limit the remote."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "276f4ef3e8693a84"
+          },
+          "properties": {
+            "severity": "high"
+          },
+          "ruleId": "LS005",
+          "ruleIndex": 4
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`category` (parameter #2) of the `Remotes.SubmitBugReport.OnServerEvent` handler is sent by the client (the type annotation `string` is not checked at runtime)"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/LobbyService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 72,
+                            "startLine": 33
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "passed to `Analytics.reportBug` as `category`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/LobbyService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 2,
+                            "startLine": 34
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "assigned to `content`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/Modules/Analytics.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 8,
+                            "startLine": 24
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "assigned to `body`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/Modules/Analytics.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 8,
+                            "startLine": 25
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`body` (client-controlled, from `category`) is sent in the body of `HttpService:PostAsync()`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/Modules/Analytics.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 14,
+                            "startLine": 26
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/Modules/Analytics.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 92,
+                  "endLine": 26,
+                  "startColumn": 14,
+                  "startLine": 26
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "`body` (client-controlled, from `category`) is sent in the body of `HttpService:PostAsync()`. The value is not type-checked and length-limited, filtered or allow-listed. Keep URLs on the server and choose them through an allow-listed key. Encode client values with `HttpService:UrlEncode`, convert ids with `tonumber`, limit the length of text and rate-limit the remote."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "12e562d3d8bd7d0e"
+          },
+          "properties": {
+            "severity": "high"
+          },
+          "ruleId": "LS005",
+          "ruleIndex": 4
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`changes` (parameter #2) of the `Remotes.SaveSettings.OnServerEvent` handler is sent by the client (the type annotation `{}[]string:any` is not checked at runtime)"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/PlayerData.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 69,
+                            "startLine": 47
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "passed to `DataManager.saveSettings` as `changes`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/PlayerData.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 2,
+                            "startLine": 48
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "assigned to `key`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/Modules/DataManager.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 6,
+                            "startLine": 73
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`key` (client-controlled, from `changes`) chooses which entry of `profile[]key` is written"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/Modules/DataManager.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 3,
+                            "startLine": 74
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/Modules/DataManager.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 14,
+                  "endLine": 74,
+                  "startColumn": 3,
+                  "startLine": 74
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "`key` (client-controlled, from `changes`) chooses which entry of `profile[]key` is written. Missing: a type check, a lower bound, an upper bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "7d9c2d8e8495e98e"
+          },
+          "properties": {
+            "severity": "high"
+          },
+          "ruleId": "LS001",
+          "ruleIndex": 0
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`changes` (parameter #2) of the `Remotes.SaveSettings.OnServerEvent` handler is sent by the client (the type annotation `{}[]string:any` is not checked at runtime)"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/PlayerData.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 69,
+                            "startLine": 47
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "passed to `DataManager.saveSettings` as `changes`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/PlayerData.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 2,
+                            "startLine": 48
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`changes` (client-controlled) is written by `settingsStore:SetAsync()`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/Modules/DataManager.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 16,
+                            "startLine": 76
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/Modules/DataManager.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 58,
+                  "endLine": 76,
+                  "startColumn": 16,
+                  "startLine": 76
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "`changes` (client-controlled) is written by `settingsStore:SetAsync()`. Missing: a type check, a lower bound, an upper bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "f03e658e2557dea7"
+          },
+          "properties": {
+            "severity": "high"
+          },
+          "ruleId": "LS001",
+          "ruleIndex": 0
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`coins` (parameter #3) of the `Remotes.OfferTrade.OnServerEvent` handler is sent by the client (the type annotation `number` is not checked at runtime)"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/TradeService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 89,
+                            "startLine": 11
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "passed to `Economy.addCoins` as `amount`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/TradeService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 3,
+                            "startLine": 29
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`coins` (client-controlled) is added to `profile.Coins`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/Modules/Economy.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 2,
+                            "startLine": 18
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/Modules/Economy.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 15,
+                  "endLine": 18,
+                  "startColumn": 2,
+                  "startLine": 18
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "`coins` (client-controlled) is added to `profile.Coins`. Missing: a lower bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "96a8e3ea613753b1"
+          },
+          "properties": {
+            "severity": "high"
+          },
+          "ruleId": "LS001",
+          "ruleIndex": 0
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`coins` (parameter #3) of the `Remotes.OfferTrade.OnServerEvent` handler is sent by the client (the type annotation `number` is not checked at runtime)"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/TradeService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 89,
+                            "startLine": 11
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "passed to `Economy.addCoins` as `amount`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/TradeService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 3,
+                            "startLine": 29
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`coins` (client-controlled) is added to `leaderstats.Coins.Value`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/Modules/Economy.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 3,
+                            "startLine": 21
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/Modules/Economy.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 26,
+                  "endLine": 21,
+                  "startColumn": 3,
+                  "startLine": 21
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "`coins` (client-controlled) is added to `leaderstats.Coins.Value`. Missing: a lower bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "a5a36a874353857d"
+          },
+          "properties": {
+            "severity": "high"
+          },
+          "ruleId": "LS001",
+          "ruleIndex": 0
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`price` (parameter #3) of the `Remotes.BuyItem.OnServerEvent` handler is sent by the client (the type annotation `number` is not checked at runtime)"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/ShopService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 80,
+                            "startLine": 35
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "passed to `Economy.trySpend` as `cost`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/ShopService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 9,
+                            "startLine": 40
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`price` (client-controlled) is subtracted from `profile.Coins`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/Modules/Economy.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 2,
+                            "startLine": 31
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/Modules/Economy.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 15,
+                  "endLine": 31,
+                  "startColumn": 2,
+                  "startLine": 31
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "`price` (client-controlled) is subtracted from `profile.Coins`. Missing: a lower bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "db58cca80df152e1"
+          },
+          "properties": {
+            "severity": "high"
+          },
+          "ruleId": "LS001",
+          "ruleIndex": 0
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`price` (parameter #3) of the `Remotes.BuyItem.OnServerEvent` handler is sent by the client (the type annotation `number` is not checked at runtime)"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/ShopService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 80,
+                            "startLine": 35
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "passed to `Economy.trySpend` as `cost`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/ShopService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 9,
+                            "startLine": 40
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`price` (client-controlled) is subtracted from `leaderstats.Coins.Value`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/Modules/Economy.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 3,
+                            "startLine": 34
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/Modules/Economy.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 26,
+                  "endLine": 34,
+                  "startColumn": 3,
+                  "startLine": 34
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "`price` (client-controlled) is subtracted from `leaderstats.Coins.Value`. Missing: a lower bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "32af93f260114939"
+          },
+          "properties": {
+            "severity": "high"
+          },
+          "ruleId": "LS001",
+          "ruleIndex": 0
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/PlayerData.server.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 5,
+                  "endLine": 49,
+                  "startColumn": 36,
+                  "startLine": 47
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "the `Remotes.SaveSettings.OnServerEvent` handler calls `settingsStore:SetAsync()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "1a1dc82dfb3522ec"
+          },
+          "properties": {
+            "severity": "low"
+          },
+          "ruleId": "LS007",
+          "ruleIndex": 6
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/PlotService.server.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 5,
+                  "endLine": 61,
+                  "startColumn": 35,
+                  "startLine": 43
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "the `Remotes.PlaceObject.OnServerEvent` handler calls `template:Clone()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "b8c722a2f1f321bb"
+          },
+          "properties": {
+            "severity": "low"
+          },
+          "ruleId": "LS007",
+          "ruleIndex": 6
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`cframe` (parameter #3) of the `Remotes.PlaceObject.OnServerEvent` handler is sent by the client (the type annotation `CFrame` is not checked at runtime)"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/PlotService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 84,
+                            "startLine": 43
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`cframe` (client-controlled) is passed to `object:PivotTo()`"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/PlotService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 9,
+                            "startLine": 57
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/PlotService.server.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 24,
+                  "endLine": 57,
+                  "startColumn": 9,
+                  "startLine": 57
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "`cframe` (client-controlled) is passed to `object:PivotTo()`. Missing: a lower bound and an upper bound (or a distance check against the character). Compute the value on the server (from server-side stats, the character's real position, etc.). If it must come from the client, clamp it to a sensible range, check distances against the character, allow-list instances, and filter text with TextService."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "ba4fdccc70f08513"
+          },
+          "properties": {
+            "severity": "high"
+          },
+          "ruleId": "LS002",
+          "ruleIndex": 1
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`object` (parameter #2) of the `Remotes.DeleteObject.OnServerEvent` handler is sent by the client (the type annotation `Model` is not checked at runtime)"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/PlotService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 69,
+                            "startLine": 64
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`object:Destroy()` is called on `object`, an Instance chosen by the client"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/PlotService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 9,
+                            "startLine": 69
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/PlotService.server.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 18,
+                  "endLine": 69,
+                  "startColumn": 9,
+                  "startLine": 69
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "`object:Destroy()` is called on `object`, an Instance chosen by the client. A type check such as `IsA` only proves what kind of object it is, not that the player owns it or may use it. Verify ownership or location before using the Instance: `inst:IsDescendantOf(player.Character)`, compare an `Owner` attribute with `player.UserId`, check the distance to the character, or look it up in a server-side list of allowed instances."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "5bcff58af5184ac0"
+          },
+          "properties": {
+            "severity": "high"
+          },
+          "ruleId": "LS003",
+          "ruleIndex": 2
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/ShopService.server.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 5,
+                  "endLine": 45,
+                  "startColumn": 31,
+                  "startLine": 35
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "the `Remotes.BuyItem.OnServerEvent` handler calls `template:Clone()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "d394b51ca783c7ca"
+          },
+          "properties": {
+            "severity": "low"
+          },
+          "ruleId": "LS007",
+          "ruleIndex": 6
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`itemId` (parameter #2) of the `Remotes.BuyItem.OnServerEvent` handler is sent by the client (the type annotation `string` is not checked at runtime)"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/ShopService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 64,
+                            "startLine": 35
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "`itemId` (client-controlled) chooses which entry of `profile` is written"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "examples/vulnerable-game/src/server/ShopService.server.luau",
+                            "uriBaseId": "%SRCROOT%"
+                          },
+                          "region": {
+                            "startColumn": 2,
+                            "startLine": 43
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/ShopService.server.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 26,
+                  "endLine": 43,
+                  "startColumn": 2,
+                  "startLine": 43
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "`itemId` (client-controlled) chooses which entry of `profile` is written. Missing: a type check, a lower bound, an upper bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "e96e83424611d8c4"
+          },
+          "properties": {
+            "severity": "high"
+          },
+          "ruleId": "LS001",
+          "ruleIndex": 0
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/server/TradeService.server.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 52,
+                  "endLine": 22,
+                  "startColumn": 40,
+                  "startLine": 22
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "`Remotes.ConfirmTrade:InvokeClient()` makes the server wait for an answer from a client, which may never come. Use a RemoteEvent for the request and another for the reply (with a server-side timeout), or at least run the invoke in a detached thread (`task.spawn`) with a timeout and validate the returned values."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "cd303fbb3b3fccee"
+          },
+          "properties": {
+            "severity": "medium"
+          },
+          "ruleId": "LS006",
+          "ruleIndex": 5
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/shared/Config.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 69,
+                  "endLine": 44,
+                  "startColumn": 26,
+                  "startLine": 44
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "credential `tsk_live_4f9…` is hard-coded in a ModuleScript replicated to clients: every player can read it. Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox secrets (`HttpService:GetSecret`) and revoke the leaked credential."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "79967087eb14ad7e"
+          },
+          "properties": {
+            "severity": "critical"
+          },
+          "ruleId": "LS008",
+          "ruleIndex": 7
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/shared/Config.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 148,
+                  "endLine": 45,
+                  "startColumn": 27,
+                  "startLine": 45
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "credential `https://disc…` is hard-coded in a ModuleScript replicated to clients: every player can read it. Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox secrets (`HttpService:GetSecret`) and revoke the leaked credential."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "3e72f97bc0ee62d0"
+          },
+          "properties": {
+            "severity": "critical"
+          },
+          "ruleId": "LS008",
+          "ruleIndex": 7
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/vulnerable-game/src/shared/Config.luau",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 44,
+                  "endLine": 46,
+                  "startColumn": 24,
+                  "startLine": 46
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "credential `Tyc00n-Adm1n…` is hard-coded in a ModuleScript replicated to clients: every player can read it. Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox secrets (`HttpService:GetSecret`) and revoke the leaked credential."
+          },
+          "partialFingerprints": {
+            "luauShield/v1": "3953e74471222a01"
+          },
+          "properties": {
+            "severity": "critical"
+          },
+          "ruleId": "LS008",
+          "ruleIndex": 7
+        }
+      ],
+      "tool": {
+        "driver": {
+          "informationUri": "https://github.com/Topogamer0/luau-shield",
+          "name": "luau-shield",
+          "rules": [
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "A value sent by the client reaches leaderstats, currency/stat fields, player data tables, DataStores or MemoryStores without being validated."
+              },
+              "help": {
+                "markdown": "A value sent by the client reaches leaderstats, currency/stat fields, player data tables, DataStores or MemoryStores without being validated.\n\n**Why:** Exploiters can fire any remote with any arguments. If the server adds a client-supplied amount to a currency, saves a client-supplied table or lets the client pick the DataStore key, an exploiter can give themselves unlimited currency, corrupt other players' data or poison saves with NaN/huge values.\n\n**Fix:** Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS001.md)",
+                "text": "A value sent by the client reaches leaderstats, currency/stat fields, player data tables, DataStores or MemoryStores without being validated.\n\nWhy: Exploiters can fire any remote with any arguments. If the server adds a client-supplied amount to a currency, saves a client-supplied table or lets the client pick the DataStore key, an exploiter can give themselves unlimited currency, corrupt other players' data or poison saves with NaN/huge values.\n\nFix: Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
+              },
+              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS001.md",
+              "id": "LS001",
+              "name": "untrusted-economy-write",
+              "properties": {
+                "precision": "high",
+                "security-severity": "8.0",
+                "tags": [
+                  "security",
+                  "roblox",
+                  "luau"
+                ]
+              },
+              "shortDescription": {
+                "text": "Client-controlled value written to currency, stats or saved data"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "A value sent by the client is assigned to a property such as Position, CFrame, Health, WalkSpeed, Parent or Text, or passed to PivotTo/TakeDamage/ApplyImpulse/SetAttribute."
+              },
+              "help": {
+                "markdown": "A value sent by the client is assigned to a property such as Position, CFrame, Health, WalkSpeed, Parent or Text, or passed to PivotTo/TakeDamage/ApplyImpulse/SetAttribute.\n\n**Why:** The server replicates these properties to everyone. Trusting the client lets exploiters teleport, fly, heal themselves, kill other players, move or delete parts, or display unfiltered text to other players.\n\n**Fix:** Compute the value on the server (from server-side stats, the character's real position, etc.). If it must come from the client, clamp it to a sensible range, check distances against the character, allow-list instances, and filter text with TextService.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS002.md)",
+                "text": "A value sent by the client is assigned to a property such as Position, CFrame, Health, WalkSpeed, Parent or Text, or passed to PivotTo/TakeDamage/ApplyImpulse/SetAttribute.\n\nWhy: The server replicates these properties to everyone. Trusting the client lets exploiters teleport, fly, heal themselves, kill other players, move or delete parts, or display unfiltered text to other players.\n\nFix: Compute the value on the server (from server-side stats, the character's real position, etc.). If it must come from the client, clamp it to a sensible range, check distances against the character, allow-list instances, and filter text with TextService."
+              },
+              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS002.md",
+              "id": "LS002",
+              "name": "untrusted-instance-property",
+              "properties": {
+                "precision": "high",
+                "security-severity": "8.0",
+                "tags": [
+                  "security",
+                  "roblox",
+                  "luau"
+                ]
+              },
+              "shortDescription": {
+                "text": "Client-controlled value assigned to a sensitive Instance property"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "An Instance received from a remote is modified, destroyed, moved or used as a source of data without verifying that it belongs to the player or is where it should be."
+              },
+              "help": {
+                "markdown": "An Instance received from a remote is modified, destroyed, moved or used as a source of data without verifying that it belongs to the player or is where it should be.\n\n**Why:** A remote can be fired with any Instance the client can see: another player's tool, a door on the other side of the map, a part of someone else's plot. Type checks such as `IsA` only prove what kind of object it is, not that the player is allowed to touch it.\n\n**Fix:** Verify ownership or location before using the Instance: `inst:IsDescendantOf(player.Character)`, compare an `Owner` attribute with `player.UserId`, check the distance to the character, or look it up in a server-side list of allowed instances.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS003.md)",
+                "text": "An Instance received from a remote is modified, destroyed, moved or used as a source of data without verifying that it belongs to the player or is where it should be.\n\nWhy: A remote can be fired with any Instance the client can see: another player's tool, a door on the other side of the map, a part of someone else's plot. Type checks such as `IsA` only prove what kind of object it is, not that the player is allowed to touch it.\n\nFix: Verify ownership or location before using the Instance: `inst:IsDescendantOf(player.Character)`, compare an `Owner` attribute with `player.UserId`, check the distance to the character, or look it up in a server-side list of allowed instances."
+              },
+              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS003.md",
+              "id": "LS003",
+              "name": "unverified-client-instance",
+              "properties": {
+                "precision": "high",
+                "security-severity": "8.0",
+                "tags": [
+                  "security",
+                  "roblox",
+                  "luau"
+                ]
+              },
+              "shortDescription": {
+                "text": "Instance sent by the client used without checking ownership or location"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "A value sent by the client reaches `loadstring`, `load`, `require` or a dynamic global lookup (`getfenv()[x]`, `_G[x]`)."
+              },
+              "help": {
+                "markdown": "A value sent by the client reaches `loadstring`, `load`, `require` or a dynamic global lookup (`getfenv()[x]`, `_G[x]`).\n\n**Why:** This gives the client remote code execution on the server: an exploiter can run arbitrary code with server privileges, require malicious assets by id, delete the game, steal data or ban players.\n\n**Fix:** Never run code or require modules chosen by the client. Dispatch commands through a server-side table of allowed functions (`Commands[name]`) and validate the name against it.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS004.md)",
+                "text": "A value sent by the client reaches `loadstring`, `load`, `require` or a dynamic global lookup (`getfenv()[x]`, `_G[x]`).\n\nWhy: This gives the client remote code execution on the server: an exploiter can run arbitrary code with server privileges, require malicious assets by id, delete the game, steal data or ban players.\n\nFix: Never run code or require modules chosen by the client. Dispatch commands through a server-side table of allowed functions (`Commands[name]`) and validate the name against it."
+              },
+              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS004.md",
+              "id": "LS004",
+              "name": "untrusted-code-execution",
+              "properties": {
+                "precision": "high",
+                "security-severity": "9.5",
+                "tags": [
+                  "security",
+                  "roblox",
+                  "luau"
+                ]
+              },
+              "shortDescription": {
+                "text": "Client-controlled value reaches loadstring/require"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "A value sent by the client is used to build the URL, headers or body of `HttpService:GetAsync/PostAsync/RequestAsync`."
+              },
+              "help": {
+                "markdown": "A value sent by the client is used to build the URL, headers or body of `HttpService:GetAsync/PostAsync/RequestAsync`.\n\n**Why:** The client can make your server send requests to arbitrary endpoints or paths, abuse your webhooks and proxies (spam, @everyone pings, Terms of Service violations that get the webhook or game banned) and exhaust the HttpService request budget.\n\n**Fix:** Keep URLs on the server and choose them through an allow-listed key. Encode client values with `HttpService:UrlEncode`, convert ids with `tonumber`, limit the length of text and rate-limit the remote.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS005.md)",
+                "text": "A value sent by the client is used to build the URL, headers or body of `HttpService:GetAsync/PostAsync/RequestAsync`.\n\nWhy: The client can make your server send requests to arbitrary endpoints or paths, abuse your webhooks and proxies (spam, @everyone pings, Terms of Service violations that get the webhook or game banned) and exhaust the HttpService request budget.\n\nFix: Keep URLs on the server and choose them through an allow-listed key. Encode client values with `HttpService:UrlEncode`, convert ids with `tonumber`, limit the length of text and rate-limit the remote."
+              },
+              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS005.md",
+              "id": "LS005",
+              "name": "untrusted-http-request",
+              "properties": {
+                "precision": "high",
+                "security-severity": "8.0",
+                "tags": [
+                  "security",
+                  "roblox",
+                  "luau"
+                ]
+              },
+              "shortDescription": {
+                "text": "Client-controlled URL, headers or body in an HttpService request"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "The server calls `RemoteFunction:InvokeClient` (or assigns `OnClientInvoke`), so it depends on an answer from an untrusted client."
+              },
+              "help": {
+                "markdown": "The server calls `RemoteFunction:InvokeClient` (or assigns `OnClientInvoke`), so it depends on an answer from an untrusted client.\n\n**Why:** A malicious client can simply never return: the server thread yields forever (pcall does not help), leaking memory and blocking whatever logic waits for the answer. A client that errors or leaves also breaks the call, and every value it returns is client-controlled.\n\n**Fix:** Use a RemoteEvent for the request and another for the reply (with a server-side timeout), or at least run the invoke in a detached thread (`task.spawn`) with a timeout and validate the returned values.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS006.md)",
+                "text": "The server calls `RemoteFunction:InvokeClient` (or assigns `OnClientInvoke`), so it depends on an answer from an untrusted client.\n\nWhy: A malicious client can simply never return: the server thread yields forever (pcall does not help), leaking memory and blocking whatever logic waits for the answer. A client that errors or leaves also breaks the call, and every value it returns is client-controlled.\n\nFix: Use a RemoteEvent for the request and another for the reply (with a server-side timeout), or at least run the invoke in a detached thread (`task.spawn`) with a timeout and validate the returned values."
+              },
+              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS006.md",
+              "id": "LS006",
+              "name": "server-invokes-client",
+              "properties": {
+                "precision": "high",
+                "security-severity": "5.5",
+                "tags": [
+                  "security",
+                  "roblox",
+                  "luau"
+                ]
+              },
+              "shortDescription": {
+                "text": "Server waits for a client with RemoteFunction:InvokeClient"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "fullDescription": {
+                "text": "A remote handler calls `*Async` APIs, `Instance.new` or `:Clone()` and has no visible rate limit or debounce."
+              },
+              "help": {
+                "markdown": "A remote handler calls `*Async` APIs, `Instance.new` or `:Clone()` and has no visible rate limit or debounce.\n\n**Why:** Exploiters can fire a remote thousands of times per second. Without a limit, each call spends DataStore/HTTP budgets, creates instances or yields, which is enough to lag or crash the server and to exhaust request quotas for everyone.\n\n**Fix:** Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS007.md)",
+                "text": "A remote handler calls `*Async` APIs, `Instance.new` or `:Clone()` and has no visible rate limit or debounce.\n\nWhy: Exploiters can fire a remote thousands of times per second. Without a limit, each call spends DataStore/HTTP budgets, creates instances or yields, which is enough to lag or crash the server and to exhaust request quotas for everyone.\n\nFix: Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
+              },
+              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS007.md",
+              "id": "LS007",
+              "name": "remote-without-rate-limit",
+              "properties": {
+                "precision": "high",
+                "security-severity": "3.0",
+                "tags": [
+                  "security",
+                  "roblox",
+                  "luau"
+                ]
+              },
+              "shortDescription": {
+                "text": "Remote handler does expensive work without a rate limit"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "A webhook URL, API key, token or cookie is written in a LocalScript or in a ModuleScript that clients can read."
+              },
+              "help": {
+                "markdown": "A webhook URL, API key, token or cookie is written in a LocalScript or in a ModuleScript that clients can read.\n\n**Why:** Exploiters can decompile every LocalScript and replicated ModuleScript. A leaked webhook can be spammed or deleted, and a leaked API key gives full access to the account or service behind it.\n\n**Fix:** Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox secrets (`HttpService:GetSecret`) and revoke the leaked credential.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS008.md)",
+                "text": "A webhook URL, API key, token or cookie is written in a LocalScript or in a ModuleScript that clients can read.\n\nWhy: Exploiters can decompile every LocalScript and replicated ModuleScript. A leaked webhook can be spammed or deleted, and a leaked API key gives full access to the account or service behind it.\n\nFix: Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox secrets (`HttpService:GetSecret`) and revoke the leaked credential."
+              },
+              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS008.md",
+              "id": "LS008",
+              "name": "client-exposed-secret",
+              "properties": {
+                "precision": "high",
+                "security-severity": "9.5",
+                "tags": [
+                  "security",
+                  "roblox",
+                  "luau"
+                ]
+              },
+              "shortDescription": {
+                "text": "Secret hard-coded in code that replicates to clients"
+              }
+            }
+          ],
+          "semanticVersion": "0.1.0",
+          "version": "0.1.0"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

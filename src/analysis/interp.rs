@@ -1435,7 +1435,13 @@ impl<'a> Analyzer<'a> {
                 }
                 Suffix::Call(call) => {
                     static_path = None;
-                    let loc = self.loc(frame.file, *suffix);
+                    // Underline from the start of the called expression.
+                    let mut loc = self.loc(frame.file, *suffix);
+                    let start = super::span_of(prefix);
+                    if start.line > 0 {
+                        loc.span.line = start.line;
+                        loc.span.column = start.column;
+                    }
                     match call {
                         Call::AnonymousCall(args) => {
                             let arg_exprs = args_exprs(args);
@@ -1461,7 +1467,12 @@ impl<'a> Analyzer<'a> {
                             if let Some(p) = path.as_mut() {
                                 p.push(name.clone());
                             }
-                            let method_loc = self.loc(frame.file, method.name());
+                            let mut method_loc = self.loc(frame.file, method.name());
+                            let end = super::span_of(method.args());
+                            if end.end_line > 0 {
+                                method_loc.span.end_line = end.end_line;
+                                method_loc.span.end_column = end.end_column;
+                            }
                             let _ = loc;
                             results = self.call_method(
                                 frame,

@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+  clippy:
+    name: clippy (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run tests
+        run: cargo test --all --locked
+
+  action:
+    name: GitHub Action
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # The fixed example must not produce any finding.
+      - name: Run the action on examples/fixed-game
+        id: fixed
+        uses: ./
+        with:
+          path: examples/fixed-game
+          build-from-source: true
+          fail-on: low
+          upload-sarif: false
+          sarif-file: fixed-game.sarif
+
+      # The vulnerable example must produce findings, but must not fail the job.
+      - name: Run the action on examples/vulnerable-game
+        id: vulnerable
+        uses: ./
+        with:
+          path: examples/vulnerable-game
+          build-from-source: true
+          fail-on: never
+          upload-sarif: false
+          sarif-file: vulnerable-game.sarif
+
+      - name: Check the SARIF reports
+        shell: bash
+        env:
+          FIXED_SARIF: ${{ steps.fixed.outputs.sarif-file }}
+          VULNERABLE_SARIF: ${{ steps.vulnerable.outputs.sarif-file }}
+        run: |
+          set -euo pipefail
+
+          for sarif in "$FIXED_SARIF" "$VULNERABLE_SARIF"; do
+            if [ ! -s "$sarif" ]; then
+              echo "::error::SARIF report '$sarif' is missing or empty."
+              exit 1
+            fi
+            jq -e '.version == "2.1.0" and (.runs | length) >= 1' "$sarif" > /dev/null \
+              || { echo "::error::$sarif is not a SARIF 2.1.0 report."; exit 1; }
+          done
+
+          fixed_count="$(jq '[.runs[].results[]?] | length' "$FIXED_SARIF")"
+          if [ "$fixed_count" -ne 0 ]; then
+            echo "::error::examples/fixed-game produced $fixed_count result(s)."
+            exit 1
+          fi
+
+          count="$(jq '[.runs[].results[]?] | length' "$VULNERABLE_SARIF")"
+          echo "examples/vulnerable-game: $count result(s)"
+          if [ "$count" -eq 0 ]; then
+            echo "::error::examples/vulnerable-game produced no results."
+            exit 1
+          fi
+
+          # Every result must carry one of the documented rule ids.
+          jq -e '[.runs[].results[] | .ruleId | test("^LS00[1-8]$")] | all' "$VULNERABLE_SARIF" > /dev/null \
+            || { echo "::error::A result has an unknown ruleId."; exit 1; }
+
+          echo "Results per rule:"
+          jq -r '[.runs[].results[].ruleId] | group_by(.) | map("  \(.[0]): \(length)") | .[]' "$VULNERABLE_SARIF"

@@ -167,16 +167,22 @@ struct SecretVisitor {
 
 impl SecretVisitor {
     fn add(&mut self, span: Span, kind: &'static str, value: &str) {
-        self.hits
-            .entry((span.line, span.column))
-            .or_insert(SecretHit {
-                loc: Loc {
-                    file: self.file,
-                    span,
-                },
-                kind,
-                preview: redact(value),
-            });
+        let hit = SecretHit {
+            loc: Loc {
+                file: self.file,
+                span,
+            },
+            kind,
+            preview: redact(value),
+        };
+        let key = (span.line, span.column);
+        // A specific kind ("Discord webhook URL") beats the generic one.
+        match self.hits.get(&key) {
+            Some(existing) if existing.kind != "credential" || kind == "credential" => {}
+            _ => {
+                self.hits.insert(key, hit);
+            }
+        }
     }
 
     fn check_named(&mut self, name: &str, expr: &Expression) {

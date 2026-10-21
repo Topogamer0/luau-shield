@@ -46,7 +46,8 @@ fn result(finding: &Finding) -> Value {
             finding.span.end_column,
         )],
         "partialFingerprints": {
-            "luauShield/v1": fingerprint(&[finding.rule.code(), &finding.file, finding.snippet.trim(), &finding.message]),
+            // Stable across message rewording and line moves: rule, file and the code itself.
+            "luauShield/v1": fingerprint(&[finding.rule.code(), &finding.file, finding.snippet.trim()]),
         },
         "properties": { "severity": finding.severity.as_str() },
     });

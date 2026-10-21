@@ -146,8 +146,6 @@ pub struct Analyzer<'a> {
     quiet: u32,
     /// > 0: evaluating only to learn values for a refinement: no calls are analysed.
     peek: u32,
-    /// > 0: inside a function running in a detached thread.
-    detached: u32,
     /// > 0: evaluating a module for `require`: handler registrations are skipped.
     module_eval: u32,
     entry: Option<EntryCtx>,
@@ -190,7 +188,6 @@ impl<'a> Analyzer<'a> {
             stack: Vec::new(),
             quiet: 0,
             peek: 0,
-            detached: 0,
             module_eval: 0,
             entry: None,
             budget: ENTRY_BUDGET,
@@ -292,7 +289,6 @@ impl<'a> Analyzer<'a> {
                 self.stack.clear();
                 self.quiet = 0;
                 self.peek = 0;
-                self.detached = 0;
                 self.module_eval = 0;
                 self.entry = None;
                 self.pending.clear();

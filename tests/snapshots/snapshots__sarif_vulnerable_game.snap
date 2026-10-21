@@ -79,7 +79,7 @@ expression: sarif
             "text": "`source` (client-controlled) is executed as code by `loadstring`. Only an allow-list can make code execution safe. Never run code or require modules chosen by the client. Dispatch commands through a server-side table of allowed functions (`Commands[name]`) and validate the name against it."
           },
           "partialFingerprints": {
-            "luauShield/v1": "150ef2f814ffe654"
+            "luauShield/v1": "6f478b4ccf3abae8"
           },
           "properties": {
             "severity": "critical"
@@ -170,7 +170,7 @@ expression: sarif
             "text": "`message` (client-controlled) is passed to `require`. Only an allow-list can make code execution safe. Never run code or require modules chosen by the client. Dispatch commands through a server-side table of allowed functions (`Commands[name]`) and validate the name against it."
           },
           "partialFingerprints": {
-            "luauShield/v1": "fcaa188840521e4c"
+            "luauShield/v1": "8efe102894759f52"
           },
           "properties": {
             "severity": "critical"
@@ -244,7 +244,7 @@ expression: sarif
             "text": "`damage` (client-controlled) is passed to `target:TakeDamage()`. Missing: a lower bound and an upper bound (or a distance check against the character). Compute the value on the server (from server-side stats, the character's real position, etc.). If it must come from the client, clamp it to a sensible range, check distances against the character, allow-list instances, and filter text with TextService."
           },
           "partialFingerprints": {
-            "luauShield/v1": "b10ffc9be9cbece2"
+            "luauShield/v1": "ed57d70f5d55ec91"
           },
           "properties": {
             "severity": "high"
@@ -318,7 +318,7 @@ expression: sarif
             "text": "`target:TakeDamage()` is called on `target`, an Instance chosen by the client. A type check such as `IsA` only proves what kind of object it is, not that the player owns it or may use it. Verify ownership or location before using the Instance: `inst:IsDescendantOf(player.Character)`, compare an `Owner` attribute with `player.UserId`, check the distance to the character, or look it up in a server-side list of allowed instances."
           },
           "partialFingerprints": {
-            "luauShield/v1": "7010065a04b60dc0"
+            "luauShield/v1": "4edd58aa65718b40"
           },
           "properties": {
             "severity": "high"
@@ -392,7 +392,7 @@ expression: sarif
             "text": "`speed` (client-controlled) is assigned to `humanoid.WalkSpeed`. Missing: a lower bound and an upper bound (or a distance check against the character). Compute the value on the server (from server-side stats, the character's real position, etc.). If it must come from the client, clamp it to a sensible range, check distances against the character, allow-list instances, and filter text with TextService."
           },
           "partialFingerprints": {
-            "luauShield/v1": "3636e4a7a1f3b151"
+            "luauShield/v1": "d6a8a1b0eef98efb"
           },
           "properties": {
             "severity": "high"
@@ -466,7 +466,7 @@ expression: sarif
             "text": "`targetPosition` (client-controlled) is assigned to `root.CFrame`. Missing: a lower bound and an upper bound (or a distance check against the character). Compute the value on the server (from server-side stats, the character's real position, etc.). If it must come from the client, clamp it to a sensible range, check distances against the character, allow-list instances, and filter text with TextService."
           },
           "partialFingerprints": {
-            "luauShield/v1": "c70eaa7056e696de"
+            "luauShield/v1": "04ac0880d6be0270"
           },
           "properties": {
             "severity": "high"
@@ -496,7 +496,7 @@ expression: sarif
             "text": "the `Remotes.LaunchFirework.OnServerEvent` handler calls `Instance.new`, `effect:Clone()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
           },
           "partialFingerprints": {
-            "luauShield/v1": "69b8352cb3b6767c"
+            "luauShield/v1": "6ffbc26e9c24107a"
           },
           "properties": {
             "severity": "low"
@@ -526,7 +526,7 @@ expression: sarif
             "text": "the `Remotes.SubmitBugReport.OnServerEvent` handler calls `HttpService:PostAsync()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
           },
           "partialFingerprints": {
-            "luauShield/v1": "8c6da9cfb3487e5a"
+            "luauShield/v1": "be066d9f3b64a98a"
           },
           "properties": {
             "severity": "low"
@@ -556,7 +556,7 @@ expression: sarif
             "text": "the `Remotes.TrackEvent.OnServerEvent` handler calls `HttpService:PostAsync()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
           },
           "partialFingerprints": {
-            "luauShield/v1": "efb5e53dabe001f9"
+            "luauShield/v1": "ad1a21e2c8a8991a"
           },
           "properties": {
             "severity": "low"
@@ -664,7 +664,7 @@ expression: sarif
             "text": "`url` (client-controlled, from `eventName`) is used in the URL of `HttpService:PostAsync()`. The value is not allow-listed, matched against a strict pattern, converted with tonumber or encoded with HttpService:UrlEncode. Keep URLs on the server and choose them through an allow-listed key. Encode client values with `HttpService:UrlEncode`, convert ids with `tonumber`, limit the length of text and rate-limit the remote."
           },
           "partialFingerprints": {
-            "luauShield/v1": "276f4ef3e8693a84"
+            "luauShield/v1": "1697197e7cdc23a8"
           },
           "properties": {
             "severity": "high"
@@ -789,7 +789,7 @@ expression: sarif
             "text": "`body` (client-controlled, from `category`) is sent in the body of `HttpService:PostAsync()`. The value is not type-checked and length-limited, filtered or allow-listed. Keep URLs on the server and choose them through an allow-listed key. Encode client values with `HttpService:UrlEncode`, convert ids with `tonumber`, limit the length of text and rate-limit the remote."
           },
           "partialFingerprints": {
-            "luauShield/v1": "12e562d3d8bd7d0e"
+            "luauShield/v1": "bfda81c21d14eaf8"
           },
           "properties": {
             "severity": "high"
@@ -897,7 +897,7 @@ expression: sarif
             "text": "`key` (client-controlled, from `changes`) chooses which entry of `profile` is written. The key is not checked against an allow-list (or a strict pattern): the client chooses which entry is written, for example `Coins` or another player's save. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
           },
           "partialFingerprints": {
-            "luauShield/v1": "4817c3f1c326afe7"
+            "luauShield/v1": "4f990def33c0d054"
           },
           "properties": {
             "severity": "high"
@@ -988,7 +988,7 @@ expression: sarif
             "text": "`changes` (client-controlled) is written by `settingsStore:SetAsync()`. Missing: a type check, a lower bound, an upper bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
           },
           "partialFingerprints": {
-            "luauShield/v1": "f03e658e2557dea7"
+            "luauShield/v1": "b5f4cd58368fe098"
           },
           "properties": {
             "severity": "high"
@@ -1079,7 +1079,7 @@ expression: sarif
             "text": "`coins` (client-controlled) is added to `profile.Coins`. Missing: a lower bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
           },
           "partialFingerprints": {
-            "luauShield/v1": "96a8e3ea613753b1"
+            "luauShield/v1": "56b3efbc5dd75906"
           },
           "properties": {
             "severity": "high"
@@ -1170,7 +1170,7 @@ expression: sarif
             "text": "`coins` (client-controlled) is added to `leaderstats.Coins.Value`. Missing: a lower bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
           },
           "partialFingerprints": {
-            "luauShield/v1": "a5a36a874353857d"
+            "luauShield/v1": "206ac5ea1889e084"
           },
           "properties": {
             "severity": "high"
@@ -1261,7 +1261,7 @@ expression: sarif
             "text": "`price` (client-controlled) is subtracted from `profile.Coins`. Missing: a lower bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
           },
           "partialFingerprints": {
-            "luauShield/v1": "db58cca80df152e1"
+            "luauShield/v1": "c4103c40ae5d3127"
           },
           "properties": {
             "severity": "high"
@@ -1352,7 +1352,7 @@ expression: sarif
             "text": "`price` (client-controlled) is subtracted from `leaderstats.Coins.Value`. Missing: a lower bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
           },
           "partialFingerprints": {
-            "luauShield/v1": "32af93f260114939"
+            "luauShield/v1": "8035c0da8ae76745"
           },
           "properties": {
             "severity": "high"
@@ -1382,7 +1382,7 @@ expression: sarif
             "text": "the `Remotes.SaveSettings.OnServerEvent` handler calls `settingsStore:SetAsync()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
           },
           "partialFingerprints": {
-            "luauShield/v1": "1a1dc82dfb3522ec"
+            "luauShield/v1": "2fed66d57dc08b49"
           },
           "properties": {
             "severity": "low"
@@ -1412,7 +1412,7 @@ expression: sarif
             "text": "the `Remotes.PlaceObject.OnServerEvent` handler calls `template:Clone()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
           },
           "partialFingerprints": {
-            "luauShield/v1": "b8c722a2f1f321bb"
+            "luauShield/v1": "605feaf61e3622cb"
           },
           "properties": {
             "severity": "low"
@@ -1486,7 +1486,7 @@ expression: sarif
             "text": "`cframe` (client-controlled) is passed to `object:PivotTo()`. Missing: a lower bound and an upper bound (or a distance check against the character). Compute the value on the server (from server-side stats, the character's real position, etc.). If it must come from the client, clamp it to a sensible range, check distances against the character, allow-list instances, and filter text with TextService."
           },
           "partialFingerprints": {
-            "luauShield/v1": "ba4fdccc70f08513"
+            "luauShield/v1": "4fa484ebb04715ca"
           },
           "properties": {
             "severity": "high"
@@ -1560,7 +1560,7 @@ expression: sarif
             "text": "`object:Destroy()` is called on `object`, an Instance chosen by the client. A type check such as `IsA` only proves what kind of object it is, not that the player owns it or may use it. Verify ownership or location before using the Instance: `inst:IsDescendantOf(player.Character)`, compare an `Owner` attribute with `player.UserId`, check the distance to the character, or look it up in a server-side list of allowed instances."
           },
           "partialFingerprints": {
-            "luauShield/v1": "5bcff58af5184ac0"
+            "luauShield/v1": "d678f78b4bd42866"
           },
           "properties": {
             "severity": "high"
@@ -1590,7 +1590,7 @@ expression: sarif
             "text": "the `Remotes.BuyItem.OnServerEvent` handler calls `template:Clone()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
           },
           "partialFingerprints": {
-            "luauShield/v1": "d394b51ca783c7ca"
+            "luauShield/v1": "56f5bd75dd73d939"
           },
           "properties": {
             "severity": "low"
@@ -1664,7 +1664,7 @@ expression: sarif
             "text": "`itemId` (client-controlled) chooses which entry of `profile.Inventory` is written. The key is not checked against an allow-list (or a strict pattern): the client chooses which entry is written, for example `Coins` or another player's save. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
           },
           "partialFingerprints": {
-            "luauShield/v1": "91051ec6435f135e"
+            "luauShield/v1": "455732ca87dd4a7b"
           },
           "properties": {
             "severity": "high"
@@ -1694,7 +1694,7 @@ expression: sarif
             "text": "`Remotes.ConfirmTrade:InvokeClient()` makes the server wait for an answer from a client, which may never come. Use a RemoteEvent for the request and another for the reply (with a server-side timeout), or at least run the invoke in a detached thread (`task.spawn`) with a timeout and validate the returned values."
           },
           "partialFingerprints": {
-            "luauShield/v1": "cd303fbb3b3fccee"
+            "luauShield/v1": "1d8227464e81613f"
           },
           "properties": {
             "severity": "medium"
@@ -1724,7 +1724,7 @@ expression: sarif
             "text": "credential `tsk_live_4f9…` is hard-coded in a ModuleScript replicated to clients: every player can read it. Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox secrets (`HttpService:GetSecret`) and revoke the leaked credential."
           },
           "partialFingerprints": {
-            "luauShield/v1": "79967087eb14ad7e"
+            "luauShield/v1": "454a52210b129cef"
           },
           "properties": {
             "severity": "critical"
@@ -1751,10 +1751,10 @@ expression: sarif
             }
           ],
           "message": {
-            "text": "credential `https://disc…` is hard-coded in a ModuleScript replicated to clients: every player can read it. Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox secrets (`HttpService:GetSecret`) and revoke the leaked credential."
+            "text": "Discord webhook URL `https://disc…` is hard-coded in a ModuleScript replicated to clients: every player can read it. Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox secrets (`HttpService:GetSecret`) and revoke the leaked credential."
           },
           "partialFingerprints": {
-            "luauShield/v1": "3e72f97bc0ee62d0"
+            "luauShield/v1": "f626229cc78e8a70"
           },
           "properties": {
             "severity": "critical"
@@ -1784,7 +1784,7 @@ expression: sarif
             "text": "credential `Tyc00n-Adm1n…` is hard-coded in a ModuleScript replicated to clients: every player can read it. Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox secrets (`HttpService:GetSecret`) and revoke the leaked credential."
           },
           "partialFingerprints": {
-            "luauShield/v1": "3953e74471222a01"
+            "luauShield/v1": "b8eed956f81c0981"
           },
           "properties": {
             "severity": "critical"

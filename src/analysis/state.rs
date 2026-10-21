@@ -179,7 +179,7 @@ pub struct Frame<'a> {
     pub vararg_rest: Option<Value<'a>>,
     pub loops: Vec<LoopCtx<'a>>,
     pub summary: Option<SummaryCollector>,
-    /// The `self` value of a method call, for display.
+    /// Name of the function, for messages.
     pub name: Rc<str>,
 }
 

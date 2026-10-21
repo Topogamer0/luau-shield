@@ -12,7 +12,7 @@ use crate::finding::Loc;
 use crate::project::ScriptKind;
 use crate::rules::sinks::{self, SinkKind};
 use crate::rules::{RuleId, is_data_container_name, is_stat_name};
-use full_moon::ast::{Call, Expression, FunctionCall, Parameter, Suffix, Var};
+use full_moon::ast::{Expression, Parameter};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -398,10 +398,7 @@ impl<'a> Analyzer<'a> {
         }
         if let Some(n) = name {
             if let Some(kind) = sinks::property_sink(n) {
-                if !matches!(base.kind, Kind::Table(_)) && !client_table {
-                    self.check_value(RuleId::Ls002, kind, shown, loc, &what);
-                } else if client_table && !matches!(base.kind, Kind::Table(_)) {
-                    // A client Instance being modified with client data.
+                if !matches!(base.kind, Kind::Table(_)) {
                     self.check_value(RuleId::Ls002, kind, shown, loc, &what);
                 }
             }
@@ -1229,14 +1226,12 @@ impl<'a> Analyzer<'a> {
                 };
                 let callee = arg(index);
                 let rest: Vec<Value<'a>> = args.iter().skip(rest_from).cloned().collect();
-                self.detached += 1;
                 for func in callee.funcs() {
                     if let Func::Closure(closure) = func {
                         let mut s = state.clone();
                         let _ = self.call_closure(&mut s, closure, rest.clone(), None, loc, false);
                     }
                 }
-                self.detached -= 1;
                 if display.contains("wrap") {
                     return vec![callee];
                 }
@@ -1502,12 +1497,7 @@ impl<'a> Analyzer<'a> {
                 })
             };
             if let Some(kind) = kind {
-                let reg = if matches!(kind, EntryKind::Remote { .. }) {
-                    self.registration_loc(frame.file, loc, recv_display)
-                } else {
-                    loc
-                };
-                self.register_entry(funcs, kind, reg, state, rate_limited, top_level);
+                self.register_entry(funcs, kind, loc, state, rate_limited, top_level);
             }
             return vec![Value::unknown()];
         }
@@ -1598,12 +1588,6 @@ impl<'a> Analyzer<'a> {
         result.player_rel = recv.player_rel;
         result.path = Some(Rc::from(format!("{display}()").as_str()));
         vec![result]
-    }
-
-    /// Line of `remote.OnServerEvent` for LS007: the start of the receiver.
-    fn registration_loc(&self, file: usize, method_loc: Loc, _display: &str) -> Loc {
-        let _ = file;
-        method_loc
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1808,22 +1792,6 @@ impl<'a> Analyzer<'a> {
         };
         Some(vec![result])
     }
-
-    /// LS003 helpers need the receiver expression of a method call.
-    #[allow(dead_code)]
-    pub(crate) fn receiver_of(
-        call: &'a FunctionCall,
-    ) -> Option<(&'a full_moon::ast::Prefix, Vec<&'a Suffix>)> {
-        let suffixes: Vec<&'a Suffix> = call.suffixes().collect();
-        let (last, init) = suffixes.split_last()?;
-        match last {
-            Suffix::Call(Call::MethodCall(_)) => Some((call.prefix(), init.to_vec())),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    fn unused_var(_: &Var) {}
 }
 
 fn length_of<'a>(value: &Value<'a>) -> Value<'a> {

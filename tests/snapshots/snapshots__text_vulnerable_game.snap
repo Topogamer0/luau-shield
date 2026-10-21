@@ -550,7 +550,7 @@ critical[LS008]: Secret hard-coded in code that replicates to clients
    |
 44 | Config.AnalyticsApiKey = "tsk_live_4f9a2c7e1b8d3f6a0c5e9b2d7a4f1c8e"
 45 | Config.BugReportWebhook = "https://discord.com/api/webhooks/1187362049571234816/qT7vXz2LmN9pRk4sYw8aBcDe5fGh1jK0lMnOpQrStUvWxYz3AbCdEfGhIjKlMnOp6Q"
-   |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ credential `https://disc…` is hard-coded in a ModuleScript replicated to clients: every player can read it
+   |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Discord webhook URL `https://disc…` is hard-coded in a ModuleScript replicated to clients: every player can read it
    |
    = why: Exploiters can decompile every LocalScript and replicated ModuleScript. A leaked webhook
            can be spammed or deleted, and a leaked API key gives full access to the account or

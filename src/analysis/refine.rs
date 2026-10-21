@@ -537,6 +537,29 @@ impl<'a> Analyzer<'a> {
             (lhs, right, cmp)
         } else if right.is_tainted() && !left.is_tainted() {
             (rhs, left, cmp.flip())
+        } else if !left.is_tainted() && !right.is_tainted() && matches!(cmp, Cmp::Eq | Cmp::Ne) {
+            // `Players:GetPlayerFromCharacter(inst.Parent) == player`: the
+            // lookup result is server data, but it is computed from a client
+            // Instance, and comparing it with a server value proves ownership.
+            let mut r = Refinement::default();
+            for (side, other) in [(lhs, &right), (rhs, &left)] {
+                let literal = matches!(
+                    other.kind,
+                    Kind::Number(Some(_)) | Kind::Str(Some(_)) | Kind::Bool(Some(_)) | Kind::Nil
+                );
+                if literal || matches!(unwrap_expr(side), Expression::Var(Var::Name(_))) {
+                    continue;
+                }
+                for root in self.tainted_roots(frame, state, side) {
+                    let facts = check::OWNERSHIP | check::TYPE_INSTANCE;
+                    if cmp == Cmp::Eq {
+                        r.on_true.add(root, facts);
+                    } else {
+                        r.on_false.add(root, facts);
+                    }
+                }
+            }
+            return r;
         } else {
             return Refinement::default();
         };

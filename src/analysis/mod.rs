@@ -47,31 +47,37 @@ pub fn span_of(node: &impl Node) -> Span {
 }
 
 /// Text of a node without comments and whitespace (`Remotes.BuyItem`).
-pub fn compact(node: &impl Node) -> String {
+pub fn compact(node: &(impl std::fmt::Display + ?Sized)) -> String {
+    let text = node.to_string();
     let mut out = String::new();
-    let mut previous_word = false;
-    for token in node.tokens() {
-        let text = token.token().to_string();
-        let is_word = text
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_alphanumeric() || c == '_');
-        if is_word && previous_word {
-            out.push(' ');
+    for line in text.lines() {
+        // Drop `--` comments (outside of string literals).
+        let mut quote: Option<char> = None;
+        let mut previous = '\0';
+        let mut end = line.len();
+        for (i, c) in line.char_indices() {
+            match quote {
+                Some(q) if c == q && previous != '\\' => quote = None,
+                Some(_) => {}
+                None if c == '"' || c == '\'' || c == '`' => quote = Some(c),
+                None if c == '-' && previous == '-' => {
+                    end = i - 1;
+                    break;
+                }
+                None => {}
+            }
+            previous = c;
         }
-        previous_word = text
-            .chars()
-            .last()
-            .is_some_and(|c| c.is_alphanumeric() || c == '_');
-        out.push_str(&text);
+        for piece in line[..end].split_whitespace() {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(piece);
+        }
     }
-    if out.len() > 80 {
-        let mut cut = 77;
-        while !out.is_char_boundary(cut) {
-            cut -= 1;
-        }
-        out.truncate(cut);
-        out.push_str("...");
+    if out.chars().count() > 80 {
+        let cut: String = out.chars().take(77).collect();
+        out = format!("{cut}...");
     }
     out
 }

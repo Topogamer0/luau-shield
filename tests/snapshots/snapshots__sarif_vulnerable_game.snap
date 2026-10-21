@@ -806,7 +806,7 @@ expression: sarif
                     {
                       "location": {
                         "message": {
-                          "text": "`changes` (parameter #2) of the `Remotes.SaveSettings.OnServerEvent` handler is sent by the client (the type annotation `{}[]string:any` is not checked at runtime)"
+                          "text": "`changes` (parameter #2) of the `Remotes.SaveSettings.OnServerEvent` handler is sent by the client (the type annotation `{ [string]: any }` is not checked at runtime)"
                         },
                         "physicalLocation": {
                           "artifactLocation": {
@@ -857,7 +857,7 @@ expression: sarif
                     {
                       "location": {
                         "message": {
-                          "text": "`key` (client-controlled, from `changes`) chooses which entry of `profile[]key` is written"
+                          "text": "`key` (client-controlled, from `changes`) chooses which entry of `profile` is written"
                         },
                         "physicalLocation": {
                           "artifactLocation": {
@@ -894,10 +894,10 @@ expression: sarif
             }
           ],
           "message": {
-            "text": "`key` (client-controlled, from `changes`) chooses which entry of `profile[]key` is written. Missing: a type check, a lower bound, an upper bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
+            "text": "`key` (client-controlled, from `changes`) chooses which entry of `profile` is written. The key is not checked against an allow-list (or a strict pattern): the client chooses which entry is written, for example `Coins` or another player's save. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
           },
           "partialFingerprints": {
-            "luauShield/v1": "7d9c2d8e8495e98e"
+            "luauShield/v1": "4817c3f1c326afe7"
           },
           "properties": {
             "severity": "high"
@@ -914,7 +914,7 @@ expression: sarif
                     {
                       "location": {
                         "message": {
-                          "text": "`changes` (parameter #2) of the `Remotes.SaveSettings.OnServerEvent` handler is sent by the client (the type annotation `{}[]string:any` is not checked at runtime)"
+                          "text": "`changes` (parameter #2) of the `Remotes.SaveSettings.OnServerEvent` handler is sent by the client (the type annotation `{ [string]: any }` is not checked at runtime)"
                         },
                         "physicalLocation": {
                           "artifactLocation": {
@@ -1624,7 +1624,7 @@ expression: sarif
                     {
                       "location": {
                         "message": {
-                          "text": "`itemId` (client-controlled) chooses which entry of `profile` is written"
+                          "text": "`itemId` (client-controlled) chooses which entry of `profile.Inventory` is written"
                         },
                         "physicalLocation": {
                           "artifactLocation": {
@@ -1661,10 +1661,10 @@ expression: sarif
             }
           ],
           "message": {
-            "text": "`itemId` (client-controlled) chooses which entry of `profile` is written. Missing: a type check, a lower bound, an upper bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
+            "text": "`itemId` (client-controlled) chooses which entry of `profile.Inventory` is written. The key is not checked against an allow-list (or a strict pattern): the client chooses which entry is written, for example `Coins` or another player's save. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
           },
           "partialFingerprints": {
-            "luauShield/v1": "e96e83424611d8c4"
+            "luauShield/v1": "91051ec6435f135e"
           },
           "properties": {
             "severity": "high"

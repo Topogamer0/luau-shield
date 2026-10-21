@@ -81,7 +81,7 @@ expression: "report::json::render(&report)"
       "end_column": 32,
       "end_line": 29,
       "file": "tests/fixtures/LS001/vulnerable/datastore-client-key.server.luau",
-      "fix": "Missing: a lower bound, an upper bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key.",
+      "fix": "The key is not checked against an allow-list (or a strict pattern): the client chooses which entry is written, for example `Coins` or another player's save. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key.",
       "flow": [
         {
           "column": 59,
@@ -141,7 +141,7 @@ expression: "report::json::render(&report)"
           "column": 57,
           "file": "tests/fixtures/LS001/vulnerable/datastore-setasync-client-value.server.luau",
           "line": 21,
-          "note": "`layout` (parameter #2) of the `SavePlot.OnServerEvent` handler is sent by the client (the type annotation `{}PlacedObject` is not checked at runtime)"
+          "note": "`layout` (parameter #2) of the `SavePlot.OnServerEvent` handler is sent by the client (the type annotation `{ PlacedObject }` is not checked at runtime)"
         },
         {
           "column": 12,
@@ -201,7 +201,7 @@ expression: "report::json::render(&report)"
       "end_column": 25,
       "end_line": 34,
       "file": "tests/fixtures/LS001/vulnerable/inventory-dynamic-key.server.luau",
-      "fix": "Missing: a lower bound, an upper bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key.",
+      "fix": "The key is not checked against an allow-list (or a strict pattern): the client chooses which entry is written, for example `Coins` or another player's save. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key.",
       "flow": [
         {
           "column": 57,
@@ -213,12 +213,12 @@ expression: "report::json::render(&report)"
           "column": 2,
           "file": "tests/fixtures/LS001/vulnerable/inventory-dynamic-key.server.luau",
           "line": 34,
-          "note": "`itemName` (client-controlled) chooses which entry of `data` is written"
+          "note": "`itemName` (client-controlled) chooses which entry of `data.Inventory` is written"
         }
       ],
       "help_uri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS001.md",
       "line": 34,
-      "message": "`itemName` (client-controlled) chooses which entry of `data` is written",
+      "message": "`itemName` (client-controlled) chooses which entry of `data.Inventory` is written",
       "rule": "LS001",
       "severity": "high",
       "slug": "untrusted-economy-write",

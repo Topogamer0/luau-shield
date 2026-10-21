@@ -261,6 +261,7 @@ impl<'a> Analyzer<'a> {
             let economy_like = matches!(
                 kind,
                 SinkKind::Economy
+                    | SinkKind::DataKey
                     | SinkKind::Property
                     | SinkKind::Text
                     | SinkKind::InstanceProperty
@@ -382,7 +383,7 @@ impl<'a> Analyzer<'a> {
                     let container = syntactic_base(target).to_string();
                     self.check_value(
                         RuleId::Ls001,
-                        SinkKind::Economy,
+                        SinkKind::DataKey,
                         key_value,
                         loc,
                         &format!("chooses which entry of `{container}` is written"),
@@ -469,12 +470,13 @@ impl<'a> Analyzer<'a> {
                     }
                     continue;
                 }
-                let what = if i == 0 {
-                    format!("is used as the key of `{call}`")
+                if i == 0 && name != "AddAsync" {
+                    let what = format!("is used as the key of `{call}`");
+                    self.check_value(RuleId::Ls001, SinkKind::DataKey, arg, loc, &what);
                 } else {
-                    format!("is written by `{call}`")
-                };
-                self.check_value(RuleId::Ls001, SinkKind::Economy, arg, loc, &what);
+                    let what = format!("is written by `{call}`");
+                    self.check_value(RuleId::Ls001, SinkKind::Economy, arg, loc, &what);
+                }
             }
         }
         if name == "SetAttribute" {

@@ -8,6 +8,8 @@ use crate::analysis::value::{Flow, check};
 pub enum SinkKind {
     /// Currency, stats, saved data, DataStore/MemoryStore (LS001).
     Economy,
+    /// The key of a write into saved data or a DataStore (LS001).
+    DataKey,
     /// Numeric / vector / boolean Instance properties (LS002).
     Property,
     /// Instance-valued properties: Parent, Team, PrimaryPart... (LS002).
@@ -62,6 +64,15 @@ pub fn missing(kind: SinkKind, flow: &Flow) -> Option<String> {
                 missing.push("NaN rejection");
             }
             Some(format!("Missing: {}.", join_list(&missing)))
+        }
+        SinkKind::DataKey => {
+            if flow.any(check::PATTERN)
+                || flow.has(check::TYPE_BOOLEAN)
+                || flow.has(check::LOWER | check::UPPER | check::NAN_SAFE)
+            {
+                return None;
+            }
+            Some("The key is not checked against an allow-list (or a strict pattern): the client chooses which entry is written, for example `Coins` or another player's save.".to_string())
         }
         SinkKind::Property => {
             if flow.has(check::TYPE_BOOLEAN) || flow.has(check::BOUNDS) {

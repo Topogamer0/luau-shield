@@ -245,25 +245,25 @@ high[LS001]: Client-controlled value written to currency, stats or saved data
    |
 73 |     for key, value in changes do
 74 |         profile[key] = value
-   |         ^^^^^^^^^^^ `key` (client-controlled, from `changes`) chooses which entry of `profile[]key` is written
+   |         ^^^^^^^^^^^ `key` (client-controlled, from `changes`) chooses which entry of `profile` is written
    |
    = data flow:
        1. examples/vulnerable-game/src/server/PlayerData.server.luau:47:69
           `changes` (parameter #2) of the `Remotes.SaveSettings.OnServerEvent` handler is sent by
-          the client (the type annotation `{}[]string:any` is not checked at runtime)
+          the client (the type annotation `{ [string]: any }` is not checked at runtime)
        2. examples/vulnerable-game/src/server/PlayerData.server.luau:48:2
           passed to `DataManager.saveSettings` as `changes`
        3. examples/vulnerable-game/src/server/Modules/DataManager.luau:73:6
           assigned to `key`
        4. examples/vulnerable-game/src/server/Modules/DataManager.luau:74:3
-          `key` (client-controlled, from `changes`) chooses which entry of `profile[]key` is
-          written
+          `key` (client-controlled, from `changes`) chooses which entry of `profile` is written
    = why: Exploiters can fire any remote with any arguments. If the server adds a client-supplied
            amount to a currency, saves a client-supplied table or lets the client pick the
            DataStore key, an exploiter can give themselves unlimited currency, corrupt other
            players' data or poison saves with NaN/huge values. Luau type annotations are erased at
            runtime: they do not validate anything.
-   = fix: Missing: a type check, a lower bound, an upper bound and NaN rejection. Let the server
+   = fix: The key is not checked against an allow-list (or a strict pattern): the client chooses
+           which entry is written, for example `Coins` or another player's save. Let the server
            decide amounts (look prices and rewards up in a server table by an allow-listed id). If
            a number must come from the client, check `typeof(x) == "number"`, reject NaN (`x ~= x`)
            and check both bounds before using it. Never use client data as a DataStore key.
@@ -279,7 +279,7 @@ high[LS001]: Client-controlled value written to currency, stats or saved data
    = data flow:
        1. examples/vulnerable-game/src/server/PlayerData.server.luau:47:69
           `changes` (parameter #2) of the `Remotes.SaveSettings.OnServerEvent` handler is sent by
-          the client (the type annotation `{}[]string:any` is not checked at runtime)
+          the client (the type annotation `{ [string]: any }` is not checked at runtime)
        2. examples/vulnerable-game/src/server/PlayerData.server.luau:48:2
           passed to `DataManager.saveSettings` as `changes`
        3. examples/vulnerable-game/src/server/Modules/DataManager.luau:76:16
@@ -495,20 +495,21 @@ high[LS001]: Client-controlled value written to currency, stats or saved data
    |
 42 |     end
 43 |     profile.Inventory[itemId] = true
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^ `itemId` (client-controlled) chooses which entry of `profile` is written
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^ `itemId` (client-controlled) chooses which entry of `profile.Inventory` is written
    |
    = data flow:
        1. examples/vulnerable-game/src/server/ShopService.server.luau:35:64
           `itemId` (parameter #2) of the `Remotes.BuyItem.OnServerEvent` handler is sent by the
           client (the type annotation `string` is not checked at runtime)
        2. examples/vulnerable-game/src/server/ShopService.server.luau:43:2
-          `itemId` (client-controlled) chooses which entry of `profile` is written
+          `itemId` (client-controlled) chooses which entry of `profile.Inventory` is written
    = why: Exploiters can fire any remote with any arguments. If the server adds a client-supplied
            amount to a currency, saves a client-supplied table or lets the client pick the
            DataStore key, an exploiter can give themselves unlimited currency, corrupt other
            players' data or poison saves with NaN/huge values. Luau type annotations are erased at
            runtime: they do not validate anything.
-   = fix: Missing: a type check, a lower bound, an upper bound and NaN rejection. Let the server
+   = fix: The key is not checked against an allow-list (or a strict pattern): the client chooses
+           which entry is written, for example `Coins` or another player's save. Let the server
            decide amounts (look prices and rewards up in a server table by an allow-listed id). If
            a number must come from the client, check `typeof(x) == "number"`, reject NaN (`x ~= x`)
            and check both bounds before using it. Never use client data as a DataStore key.

@@ -454,3 +454,36 @@ fn deep_recursion_and_big_files_terminate() {
     assert_eq!(findings.len(), 300);
     assert!(start.elapsed().as_secs() < 20);
 }
+
+#[test]
+fn oop_classes_with_metatables() {
+    let code = r#"
+local Shop = {}
+Shop.__index = Shop
+
+function Shop.new(owner: Player)
+	local self = setmetatable({}, Shop)
+	self.owner = owner
+	return self
+end
+
+function Shop:Deposit(amount: number)
+	self.owner.leaderstats.Coins.Value += amount
+end
+
+function Shop:SafeDeposit(amount: unknown)
+	if typeof(amount) ~= "number" or amount ~= amount or amount < 1 or amount > 10 then
+		return
+	end
+	self.owner.leaderstats.Coins.Value += amount
+end
+
+local Remotes = game:GetService("ReplicatedStorage").Remotes
+Remotes.Deposit.OnServerEvent:Connect(function(player, amount)
+	local shop = Shop.new(player)
+	shop:Deposit(amount)
+	shop:SafeDeposit(amount)
+end)
+"#;
+    assert_eq!(run(&[("s.server.luau", code)]), ["s.server.luau:12:LS001"]);
+}

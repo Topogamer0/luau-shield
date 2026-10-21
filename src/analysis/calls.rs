@@ -1211,10 +1211,8 @@ impl<'a> Analyzer<'a> {
                 };
                 vec![self.index_value(&arg(0), key, loc, display, "[...]")]
             }
-            Builtin::Rawset
-            | Builtin::Setmetatable
-            | Builtin::TableClone
-            | Builtin::TableFreeze => vec![arg(0)],
+            Builtin::Setmetatable => vec![with_metatable(arg(0), &arg(1))],
+            Builtin::Rawset | Builtin::TableClone | Builtin::TableFreeze => vec![arg(0)],
             Builtin::Rawequal => vec![Value::of(Kind::Bool(None))],
             Builtin::Getmetatable => vec![Value::unknown()],
             Builtin::Print | Builtin::TableSort => Vec::new(),
@@ -1791,6 +1789,40 @@ impl<'a> Analyzer<'a> {
             _ => return None,
         };
         Some(vec![result])
+    }
+}
+
+/// `setmetatable(object, Class)`: methods reachable through `__index` (or
+/// defined on the metatable itself, as in `Class.__index = Class`) become
+/// visible on the object, so `object:Method()` resolves.
+fn with_metatable<'a>(object: Value<'a>, metatable: &Value<'a>) -> Value<'a> {
+    let Kind::Table(mt) = &metatable.kind else {
+        return object;
+    };
+    let mut inherited: BTreeMap<Rc<str>, Value<'a>> = BTreeMap::new();
+    for (name, value) in &mt.fields {
+        if !name.starts_with("__") {
+            inherited.insert(name.clone(), value.clone());
+        }
+    }
+    if let Some(Kind::Table(index)) = mt.fields.get("__index").map(|v| &v.kind) {
+        for (name, value) in &index.fields {
+            inherited
+                .entry(name.clone())
+                .or_insert_with(|| value.clone());
+        }
+    }
+    let mut table = match &object.kind {
+        Kind::Table(t) => (**t).clone(),
+        Kind::Unknown => Table::default(),
+        _ => return object,
+    };
+    for (name, value) in inherited {
+        table.fields.entry(name).or_insert(value);
+    }
+    Value {
+        kind: Kind::Table(Rc::new(table)),
+        ..object
     }
 }
 

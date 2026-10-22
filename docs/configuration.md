@@ -60,6 +60,7 @@ project = "default.project.json"              # Rojo project used to map files t
 ignore = ["Packages/**", "**/*.spec.luau"]    # globs relative to the config file directory
 trust-unresolved-validators = true
 max-call-depth = 6
+allow-parse-errors = false
 
 [rules]
 luau-shield007 = "off"
@@ -93,9 +94,10 @@ timeout-seconds = 60
 | `ignore` | array of globs | `[]` | Files and directories that are not analysed. Globs are relative to the directory of the configuration file: `*` matches inside one path segment, `**` matches any number of directories. Directories named `Packages`, `DevPackages`, `ServerPackages`, `node_modules` and `.git` are always skipped. |
 | `trust-unresolved-validators` | boolean | `true` | When a guard calls a function that cannot be resolved and whose name starts with `is`, `validate`, `verify`, `check`, `sanitize`, `assert` or `ensure` (for example `Validator.isValidItem(x)` from a package), trust it to validate its arguments. Set to `false` to require real checks or [sanitizers](#sanitizers). |
 | `max-call-depth` | integer | `6` | How many nested calls into local functions and required modules are followed. Deeper calls are cut off: their result is treated conservatively. |
+| `allow-parse-errors` | boolean | `false` | A file that cannot be read or parsed is skipped with a warning, and by default the run then exits with code `2`, because the file was not analysed. Set to `true` (or pass `--allow-parse-errors`) to only warn. |
 
 How `min-severity` and `fail-on` combine (exit code `2` always means a usage,
-configuration or I/O error):
+configuration or I/O error, or a file that could not be analysed):
 
 | `min-severity` | `fail-on` | Reported | Exit code `1` when |
 | --- | --- | --- | --- |
@@ -307,6 +309,11 @@ door.CanCollide = false
 ```lua
 -- luau-shield-ignore-file: luau-shield007 admin remotes, only callable by group admins
 ```
+
+The rule list is optional: a bare `-- luau-shield-ignore` (or
+`-- luau-shield-ignore-file`) suppresses every rule on that line (or file).
+Prefer naming the rule, so that a new kind of problem on the same line is
+still reported.
 
 Suppressed findings are not reported and do not affect the exit code, but
 they are counted in the summary, so suppressions stay visible.

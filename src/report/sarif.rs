@@ -16,10 +16,40 @@ fn location(file: &str, line: usize, column: usize, end_line: usize, end_column:
     }
     json!({
         "physicalLocation": {
-            "artifactLocation": { "uri": file, "uriBaseId": "%SRCROOT%" },
+            "artifactLocation": artifact(file),
             "region": region,
         }
     })
+}
+
+/// Percent-encodes a path for a URI (keeping `/`).
+fn encode(path: &str) -> String {
+    let mut out = String::new();
+    for b in path.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// Relative paths are relative to the source root; absolute paths (files
+/// outside the working directory) become `file://` URIs.
+fn artifact(file: &str) -> Value {
+    let windows_drive = file.len() > 2 && file.as_bytes()[1] == b':';
+    if file.starts_with('/') || windows_drive {
+        let path = if windows_drive {
+            format!("/{file}")
+        } else {
+            file.to_string()
+        };
+        json!({ "uri": format!("file://{}", encode(&path).replace("%3A", ":")) })
+    } else {
+        json!({ "uri": encode(file), "uriBaseId": "%SRCROOT%" })
+    }
 }
 
 fn result(finding: &Finding) -> Value {
@@ -69,7 +99,10 @@ fn result(finding: &Finding) -> Value {
 pub fn render(report: &Report) -> String {
     let rules: Vec<Value> = RULES
         .iter()
-        .map(|meta| {
+        .zip(RuleId::ALL)
+        .map(|(meta, rule)| {
+            // Severity overrides from luau-shield.toml apply to the alerts.
+            let severity = report.rule_severities.get(&rule).copied().unwrap_or(meta.severity);
             json!({
                 "id": meta.code,
                 "name": meta.slug,
@@ -80,11 +113,11 @@ pub fn render(report: &Report) -> String {
                     "markdown": format!("{}\n\n**Why:** {}\n\n**Fix:** {}\n\n[Documentation]({})", meta.summary, meta.why, meta.fix, meta.help_uri()),
                 },
                 "helpUri": meta.help_uri(),
-                "defaultConfiguration": { "level": meta.severity.sarif_level() },
+                "defaultConfiguration": { "level": severity.sarif_level() },
                 "properties": {
                     "tags": ["security", "roblox", "luau"],
                     "precision": "high",
-                    "security-severity": meta.severity.security_score(),
+                    "security-severity": severity.security_score(),
                 },
             })
         })
@@ -123,4 +156,21 @@ pub fn render(report: &Report) -> String {
     let mut text = serde_json::to_string_pretty(&document).expect("SARIF serializes");
     text.push('\n');
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uris() {
+        assert_eq!(
+            artifact("src/My Game/a.luau")["uri"],
+            "src/My%20Game/a.luau"
+        );
+        assert_eq!(artifact("src/a.luau")["uriBaseId"], "%SRCROOT%");
+        assert_eq!(artifact("/tmp/x y.luau")["uri"], "file:///tmp/x%20y.luau");
+        assert_eq!(artifact("C:/work/a.luau")["uri"], "file:///C:/work/a.luau");
+        assert!(artifact("/tmp/a.luau").get("uriBaseId").is_none());
+    }
 }

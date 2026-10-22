@@ -101,6 +101,9 @@ struct CheckArgs {
     /// Only print the summary line (text format)
     #[arg(short, long)]
     quiet: bool,
+    /// Do not exit with code 2 when some files cannot be read or parsed
+    #[arg(long)]
+    allow_parse_errors: bool,
 }
 
 fn main() -> ExitCode {
@@ -173,14 +176,17 @@ fn load_config(args: &CheckArgs) -> Result<Config, String> {
     }
     let only = parse_rules(&args.only)?;
     if !only.is_empty() {
+        // Flags win over the configuration file: `--only` also turns back on
+        // a rule that luau-shield.toml disables.
         for (rule, setting) in config.rules.iter_mut() {
-            if !only.contains(rule) {
-                setting.enabled = false;
-            }
+            setting.enabled = only.contains(rule);
         }
     }
     if let Some(model) = &args.ollama_model {
         config.explain_model = model.clone();
+    }
+    if args.allow_parse_errors {
+        config.allow_parse_errors = true;
     }
     Ok(config)
 }
@@ -258,6 +264,14 @@ fn run_check(args: CheckArgs) -> Result<ExitCode, String> {
                 return Ok(ExitCode::from(2));
             }
         }
+    }
+    if report.incomplete(&config) {
+        let _ = writeln!(
+            stderr,
+            "error: {} file(s) could not be analysed (see the warnings above); fix them, ignore them in luau-shield.toml or pass --allow-parse-errors",
+            report.parse_failures.len()
+        );
+        return Ok(ExitCode::from(2));
     }
     Ok(if report.fails(&config) {
         ExitCode::from(1)

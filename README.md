@@ -100,10 +100,12 @@ luau-shield init                                 # write a starter luau-shield.t
 | `--explain`, `--ollama-model MODEL` | Ask a local model for a detailed explanation (see below). |
 | `--color auto\|always\|never` | Colors in text output (`NO_COLOR` is honoured). |
 | `-q, --quiet` | Only print the summary line. |
+| `--allow-parse-errors` | Do not fail when some files cannot be read or parsed (they are skipped with a warning). |
 
 Exit codes: **0** no finding at or above `--fail-on`, **1** findings,
-**2** usage, configuration or I/O error. Files that cannot be parsed are
-reported as warnings and skipped.
+**2** usage, configuration or I/O error, or files that could not be analysed
+(a file the parser does not understand is never skipped silently; pass
+`--allow-parse-errors` or set `allow-parse-errors = true` to accept it).
 
 luau-shield knows which code runs where: `*.server.luau` scripts run on the
 server, `*.client.luau` LocalScripts on the client, and ModuleScripts take the

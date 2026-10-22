@@ -313,7 +313,9 @@ runs:
           */*) mkdir -p "${INPUT_SARIF_FILE%/*}" ;;
         esac
 
-        luau-shield check "${args[@]}" --format sarif --output "$INPUT_SARIF_FILE" --fail-on never
+        # --allow-parse-errors: the report is uploaded even when some files
+        # cannot be parsed; the "Check findings" step still fails on them.
+        luau-shield check "${args[@]}" --format sarif --output "$INPUT_SARIF_FILE" --fail-on never --allow-parse-errors
         echo "sarif-file=$INPUT_SARIF_FILE" >> "$GITHUB_OUTPUT"
 
     - name: Upload SARIF to code scanning
@@ -345,5 +347,7 @@ runs:
         luau-shield check "${args[@]}" "${color[@]}" --format text --fail-on "${INPUT_FAIL_ON:-high}" || status=$?
         if [ "$status" -eq 1 ]; then
           echo "::error title=luau-shield::luau-shield reported findings at or above the '${INPUT_FAIL_ON:-high}' severity."
+        elif [ "$status" -eq 2 ]; then
+          echo "::error title=luau-shield::luau-shield could not run or could not analyse some files (see the log)."
         fi
         exit "$status"

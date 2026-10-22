@@ -3,7 +3,7 @@
 
 use crate::analysis::value::{Checks, checks_from_names};
 use crate::rules::{RuleId, Severity};
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -20,6 +20,7 @@ struct RawConfig {
     ignore: Vec<String>,
     trust_unresolved_validators: Option<bool>,
     max_call_depth: Option<usize>,
+    allow_parse_errors: Option<bool>,
     #[serde(default)]
     rules: BTreeMap<String, RawRuleSetting>,
     #[serde(default)]
@@ -144,6 +145,8 @@ pub struct Config {
     pub base_dir: PathBuf,
     pub trust_unresolved_validators: bool,
     pub max_call_depth: usize,
+    /// Do not fail (exit code 2) when some files cannot be read or parsed.
+    pub allow_parse_errors: bool,
     pub rules: HashMap<RuleId, RuleSetting>,
     pub sanitizers: Vec<Sanitizer>,
     pub sinks: Vec<CustomSink>,
@@ -164,6 +167,7 @@ impl Default for Config {
             base_dir: PathBuf::from("."),
             trust_unresolved_validators: true,
             max_call_depth: 6,
+            allow_parse_errors: false,
             rules: RuleId::ALL
                 .into_iter()
                 .map(|rule| {
@@ -249,13 +253,16 @@ impl Config {
         config.project = raw.project.map(|p| base_dir.join(p));
         let mut globs = GlobSetBuilder::new();
         for pattern in &raw.ignore {
-            let glob =
-                Glob::new(pattern).map_err(|e| format!("invalid ignore glob `{pattern}`: {e}"))?;
+            // `*` stays inside one path segment, `**` crosses directories.
+            let glob = GlobBuilder::new(pattern)
+                .literal_separator(true)
+                .build()
+                .map_err(|e| format!("invalid ignore glob `{pattern}`: {e}"))?;
             globs.add(glob);
             // `dir/` or `dir` should also ignore everything inside it.
             if !pattern.ends_with("**") {
                 let nested = format!("{}/**", pattern.trim_end_matches('/'));
-                if let Ok(glob) = Glob::new(&nested) {
+                if let Ok(glob) = GlobBuilder::new(&nested).literal_separator(true).build() {
                     globs.add(glob);
                 }
             }
@@ -263,6 +270,9 @@ impl Config {
         config.ignore = globs.build().map_err(|e| e.to_string())?;
         if let Some(v) = raw.trust_unresolved_validators {
             config.trust_unresolved_validators = v;
+        }
+        if let Some(allow) = raw.allow_parse_errors {
+            config.allow_parse_errors = allow;
         }
         if let Some(depth) = raw.max_call_depth {
             config.max_call_depth = depth.clamp(1, 32);
@@ -396,6 +406,9 @@ mod tests {
         assert_eq!(config.severity_of(RuleId::Ls002), Severity::Low);
         assert_eq!(config.sanitizers.len(), 2);
         assert!(config.ignore.is_match("vendor/x.luau"));
+        let star = Config::from_toml("ignore = [\"*.lua\"]", Path::new(".")).unwrap();
+        assert!(star.ignore.is_match("old.lua"));
+        assert!(!star.ignore.is_match("src/server/x.lua"));
         assert_eq!(config.sources.len(), 2);
         assert_eq!(config.explain_model, "llama3.1");
     }

@@ -232,7 +232,7 @@ Everywhere else, run the CLI directly.
 | --- | --- |
 | `0` | No reported finding at or above `--fail-on`. |
 | `1` | At least one reported finding at or above `--fail-on`. |
-| `2` | Usage, configuration or I/O error (bad flag, invalid `luau-shield.toml`, unreadable path, ...). |
+| `2` | Usage, configuration or I/O error (bad flag, invalid `luau-shield.toml`, unreadable path, ...), or files that could not be read or parsed (unless `--allow-parse-errors`). |
 
 Treat `2` differently from `1` in scripts: it means the scan did not run
 correctly, not that the code is vulnerable.

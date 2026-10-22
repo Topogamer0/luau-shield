@@ -32,6 +32,8 @@ pub struct Report {
     pub warnings: Vec<String>,
     /// Source text of the files that have findings, by display path.
     pub sources: BTreeMap<String, String>,
+    /// Effective severity of every rule (after configuration overrides).
+    pub rule_severities: BTreeMap<rules::RuleId, rules::Severity>,
 }
 
 impl Report {
@@ -42,10 +44,31 @@ impl Report {
             None => false,
         }
     }
+
+    /// Files were skipped because they could not be read or parsed, and the
+    /// configuration does not allow it.
+    pub fn incomplete(&self, config: &Config) -> bool {
+        !self.parse_failures.is_empty() && !config.allow_parse_errors
+    }
 }
 
 /// Analyses `paths` with `config`.
+///
+/// The analysis runs on a thread with a large stack: deeply nested code is
+/// interpreted recursively.
 pub fn check(paths: &[PathBuf], config: &Config) -> Result<Report, String> {
+    let paths = paths.to_vec();
+    let config = config.clone();
+    std::thread::Builder::new()
+        .name("luau-shield".into())
+        .stack_size(512 * 1024 * 1024)
+        .spawn(move || check_on_this_thread(&paths, &config))
+        .map_err(|e| format!("cannot start the analysis thread: {e}"))?
+        .join()
+        .map_err(|_| "internal error during the analysis".to_string())?
+}
+
+fn check_on_this_thread(paths: &[PathBuf], config: &Config) -> Result<Report, String> {
     let project = Project::load(
         paths,
         &LoadOptions {
@@ -97,6 +120,11 @@ pub fn check(paths: &[PathBuf], config: &Config) -> Result<Report, String> {
             .files
             .iter()
             .filter_map(|f| f.parse_error.clone())
+            .chain(project.unreadable.iter().cloned())
+            .collect(),
+        rule_severities: rules::RuleId::ALL
+            .into_iter()
+            .map(|rule| (rule, config.severity_of(rule)))
             .collect(),
         warnings,
         sources,

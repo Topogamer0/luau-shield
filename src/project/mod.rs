@@ -96,6 +96,8 @@ pub struct Project {
     by_path: HashMap<PathBuf, usize>,
     luaurc: Vec<(PathBuf, HashMap<String, PathBuf>)>,
     pub warnings: Vec<String>,
+    /// Files that were found but could not be read.
+    pub unreadable: Vec<ParseFailure>,
 }
 
 const ALWAYS_IGNORED_DIRS: &[&str] = &[
@@ -245,7 +247,7 @@ fn find_upwards(start: &Path, name: &str) -> Option<PathBuf> {
 impl Project {
     /// Discovers, reads and parses every `.luau`/`.lua` file under `paths`.
     pub fn load(paths: &[PathBuf], options: &LoadOptions) -> Result<Project, String> {
-        let mut warnings = Vec::new();
+        let warnings = Vec::new();
         let mut files: Vec<PathBuf> = Vec::new();
         let ignore_base = absolute(&options.ignore_base);
         for path in paths {
@@ -257,6 +259,7 @@ impl Project {
                 continue;
             }
             let walker = walkdir::WalkDir::new(path)
+                .follow_links(true)
                 .sort_by_file_name()
                 .into_iter()
                 .filter_entry(|entry| {
@@ -283,6 +286,9 @@ impl Project {
 
         // Rojo project: explicit, or default.project.json next to / above the first path.
         let project_file = match &options.project_file {
+            Some(p) if !p.is_file() => {
+                return Err(format!("Rojo project not found: {}", p.display()));
+            }
             Some(p) => Some(p.clone()),
             None => paths.first().and_then(|p| {
                 let abs = absolute(p);
@@ -296,13 +302,8 @@ impl Project {
         };
         let mut mapped: HashMap<PathBuf, Vec<String>> = HashMap::new();
         if let Some(project_file) = &project_file {
-            match rojo::load_project(project_file) {
-                Ok(mappings) => {
-                    for m in mappings {
-                        mapped.entry(absolute(&m.file)).or_insert(m.instance_path);
-                    }
-                }
-                Err(e) => warnings.push(e),
+            for m in rojo::load_project(project_file)? {
+                mapped.entry(absolute(&m.file)).or_insert(m.instance_path);
             }
         }
 
@@ -324,19 +325,37 @@ impl Project {
             by_path: HashMap::new(),
             luaurc: Vec::new(),
             warnings,
+            unreadable: Vec::new(),
         };
 
         for path in files {
             let id = project.files.len();
-            let text = match std::fs::read_to_string(&path) {
-                Ok(t) => t,
+            let text = match std::fs::read(&path) {
+                Ok(bytes) => match String::from_utf8(bytes) {
+                    Ok(text) => text,
+                    Err(e) => {
+                        project.warnings.push(format!(
+                            "{} is not valid UTF-8; invalid bytes were replaced",
+                            display_path(&path)
+                        ));
+                        String::from_utf8_lossy(e.as_bytes()).into_owned()
+                    }
+                },
                 Err(e) => {
-                    project
-                        .warnings
-                        .push(format!("cannot read {}: {e}", path.display()));
+                    project.unreadable.push(ParseFailure {
+                        file: display_path(&path),
+                        line: 1,
+                        column: 1,
+                        message: format!("cannot read the file: {e}"),
+                    });
                     continue;
                 }
             };
+            // A byte order mark is not Luau.
+            let text = text
+                .strip_prefix('\u{feff}')
+                .map(str::to_string)
+                .unwrap_or(text);
             let kind = script_kind(&path);
             let (instance_path, context) = match mapped.get(&path) {
                 Some(inst) => (inst.clone(), context_for_instance(kind, inst)),
@@ -358,12 +377,23 @@ impl Project {
                             inst.push(comp.clone());
                         }
                     }
-                    // Directory hints come from the whole path, so that
-                    // `game/src/server/x.luau` is a server module.
+                    // Directory hints come from the path inside the project
+                    // (relative to the working directory, or to the parent of
+                    // the checked directory), so that `src/server/x.luau` is a
+                    // server module but `/home/ci/workspace/...` above the
+                    // project does not count.
+                    let hint_root = std::env::current_dir()
+                        .ok()
+                        .map(|cwd| normalize(&cwd))
+                        .filter(|cwd| path.starts_with(cwd))
+                        .or_else(|| base_dir.parent().map(Path::to_path_buf))
+                        .unwrap_or_default();
                     let hints: Vec<String> = path
                         .parent()
                         .map(|p| {
-                            p.components()
+                            p.strip_prefix(&hint_root)
+                                .unwrap_or(p)
+                                .components()
                                 .map(|c| c.as_os_str().to_string_lossy().into_owned())
                                 .collect()
                         })
@@ -408,7 +438,7 @@ impl Project {
             let Ok(text) = std::fs::read_to_string(&rc) else {
                 continue;
             };
-            let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+            let Ok(json) = serde_json::from_str::<serde_json::Value>(&relaxed_json(&text)) else {
                 self.warnings
                     .push(format!("invalid JSON in {}", rc.display()));
                 continue;
@@ -531,6 +561,60 @@ impl Project {
         }
         None
     }
+}
+
+/// `.luaurc` files accept comments and trailing commas: remove them so that
+/// they can be read as strict JSON.
+fn relaxed_json(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    let mut in_string = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_string {
+            out.push(c);
+            if c == '\\' && i + 1 < chars.len() {
+                out.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
+            if c == '"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '"' => {
+                in_string = true;
+                out.push(c);
+            }
+            '/' if chars.get(i + 1) == Some(&'/') => {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            '/' if chars.get(i + 1) == Some(&'*') => {
+                i += 2;
+                while i + 1 < chars.len() && !(chars[i] == '*' && chars[i + 1] == '/') {
+                    i += 1;
+                }
+                i += 2;
+                continue;
+            }
+            ',' => {
+                let next = chars[i + 1..].iter().find(|c| !c.is_whitespace());
+                if !matches!(next, Some('}') | Some(']')) {
+                    out.push(c);
+                }
+            }
+            _ => out.push(c),
+        }
+        i += 1;
+    }
+    out
 }
 
 fn parse(text: &str, display: &str) -> (Option<Ast>, Option<ParseFailure>) {

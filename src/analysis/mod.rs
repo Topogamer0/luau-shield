@@ -147,6 +147,8 @@ pub struct Analyzer<'a> {
     ls003_sources: HashSet<u32>,
     suppressed: HashSet<(RuleId, usize, usize, usize)>,
     modules: HashMap<usize, ModuleState<'a>>,
+    /// Modules each file requires (file -> module files).
+    required: HashMap<usize, std::collections::BTreeSet<usize>>,
     statics: HashMap<usize, Rc<HashMap<VarId, Value<'a>>>>,
     summaries: HashMap<(usize, usize), Option<Rc<Summary>>>,
     next_source: u32,
@@ -195,6 +197,7 @@ impl<'a> Analyzer<'a> {
             ls003_sources: HashSet::new(),
             suppressed: HashSet::new(),
             modules: HashMap::new(),
+            required: HashMap::new(),
             statics: HashMap::new(),
             summaries: HashMap::new(),
             next_source: 1,

@@ -56,6 +56,10 @@ The same holds for `require` of a `ModuleScript` **value** read from a server
 table (`require(WEAPON_MODULES[name])`): the key is the client's, but the value
 is yours.
 
+**Not a sink: calling a field of client data.** Remotes cannot carry
+functions, so `data.callback()` or `pcall(name.upper, name)` cannot run a
+function the client chose (at worst the call errors). They are not reported.
+
 ## Why it is dangerous
 
 A server that runs client-supplied code hands the exploiter the whole game. An

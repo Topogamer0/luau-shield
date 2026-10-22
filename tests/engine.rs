@@ -537,3 +537,172 @@ end)
         ["s.server.luau:20:luau-shield001"]
     );
 }
+
+#[test]
+fn checks_through_locals_booleans_and_ternaries() {
+    let code = r#"local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Remotes = ReplicatedStorage.Remotes
+local ITEMS = { Sword = { Price = 100 } }
+local Profiles = {}
+
+Remotes.SetTips.OnServerEvent:Connect(function(player, value)
+	local valueType = typeof(value)
+	if valueType ~= "boolean" then
+		return
+	end
+	Profiles[player].Data.Settings.ShowTips = value
+end)
+
+Remotes.BuyRaw.OnServerEvent:Connect(function(player, itemId)
+	local item = rawget(ITEMS, itemId)
+	if not item then
+		return
+	end
+	Profiles[player].Data.Inventory[itemId] = true
+end)
+
+Remotes.Blink.OnServerEvent:Connect(function(player, target)
+	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	if not root or typeof(target) ~= "Vector3" then
+		return
+	end
+	local offset = target - root.Position
+	if offset.Magnitude > 40 then
+		return
+	end
+	root.CFrame = CFrame.new(target)
+end)
+
+Remotes.Paint.OnServerEvent:Connect(function(player, part)
+	local plot = workspace.Plots:FindFirstChild(player.Name)
+	if plot == nil or part:IsDescendantOf(plot) == false then
+		return
+	end
+	part.CanCollide = false
+end)
+
+Remotes.Ready.OnServerEvent:Connect(function(player, ready)
+	local label = workspace.Board:FindFirstChild(player.Name)
+	if label then
+		label.Text = player.DisplayName .. (ready and " is ready" or " is not ready")
+	end
+end)
+
+Remotes.Unequip.OnServerEvent:Connect(function(player, accessory)
+	if typeof(accessory) ~= "Instance" then
+		return
+	end
+	local owner = game:GetService("Players"):GetPlayerFromCharacter(accessory.Parent)
+	if owner ~= player then
+		return
+	end
+	accessory:Destroy()
+end)
+
+Remotes.Rename.OnServerEvent:Connect(function(player, name)
+	if typeof(name) ~= "string" then
+		return
+	end
+	local result = game:GetService("TextService"):FilterStringAsync(name, player.UserId)
+	local filtered = result.GetNonChatStringForBroadcastAsync(result)
+	player.Character.Head.NameTag.Text = filtered
+end)
+
+Remotes.Callback.OnServerEvent:Connect(function(player, data)
+	data.callback()
+end)
+"#;
+    let found = run(&[("checks.server.luau", code)]);
+    let unexpected: Vec<_> = found
+        .iter()
+        .filter(|f| !f.ends_with("luau-shield007"))
+        .collect();
+    assert!(unexpected.is_empty(), "{found:?}");
+}
+
+#[test]
+fn locks_written_as_comparisons_and_lists() {
+    let code = r#"local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+local spawning = {}
+local active = {}
+
+ReplicatedStorage.Remotes.SpawnCar.OnServerEvent:Connect(function(player)
+	if spawning[player] == true then return end
+	spawning[player] = true
+	ServerStorage.Car:Clone().Parent = workspace
+	task.wait(5)
+	spawning[player] = false
+end)
+
+ReplicatedStorage.Remotes.SpawnBoat.OnServerEvent:Connect(function(player)
+	if table.find(active, player) then return end
+	table.insert(active, player)
+	ServerStorage.Boat:Clone().Parent = workspace
+	task.wait(5)
+	table.remove(active, table.find(active, player))
+end)
+
+ReplicatedStorage.Remotes.SpawnPlane.OnServerEvent:Connect(function(player)
+	ServerStorage.Plane:Clone().Parent = workspace
+end)
+"#;
+    assert_eq!(
+        run(&[("locks.server.luau", code)]),
+        ["locks.server.luau:22:luau-shield007"]
+    );
+}
+
+#[test]
+fn methods_of_objects_stored_by_other_handlers() {
+    let main = r#"local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local PlayerSession = require(script.Parent.PlayerSession)
+local sessions = {}
+Players.PlayerAdded:Connect(function(player)
+	sessions[player] = PlayerSession.new(player)
+end)
+ReplicatedStorage.Remotes.Tip.OnServerEvent:Connect(function(player, amount)
+	local session = sessions[player]
+	if session then
+		session:addCoins(amount)
+	end
+end)
+"#;
+    let class = r#"local PlayerSession = {}
+PlayerSession.__index = PlayerSession
+function PlayerSession.new(player)
+	local self = setmetatable({}, PlayerSession)
+	self.Data = { Coins = 0 }
+	return self
+end
+function PlayerSession:addCoins(amount)
+	self.Data.Coins += amount
+end
+return PlayerSession
+"#;
+    assert_eq!(
+        run(&[
+            ("src/server/Main.server.luau", main),
+            ("src/server/PlayerSession.luau", class),
+        ]),
+        ["src/server/PlayerSession.luau:9:luau-shield001"]
+    );
+}
+
+#[test]
+fn bracket_attributes_parse() {
+    let code = r#"local ReplicatedStorage = game:GetService("ReplicatedStorage")
+@[native]
+local function double(x: number): number
+	return x * 2
+end
+ReplicatedStorage.Remotes.Give.OnServerEvent:Connect(function(player, amount)
+	player.leaderstats.Coins.Value += double(amount)
+end)
+"#;
+    assert_eq!(
+        run(&[("attr.server.luau", code)]),
+        ["attr.server.luau:7:luau-shield001"]
+    );
+}

@@ -280,14 +280,37 @@ functions it calls, silences the finding. Any of these is evidence:
    ```
 
    A lock that is set and never cleared allows one run per session, which
-   is the right shape for "claim once" rewards.
+   is the right shape for "claim once" rewards. The guard can also be
+   written `if busy[player] == true then return end`, and a list works the
+   same way: `if table.find(busy, player) then return end` together with
+   `table.insert(busy, player)`.
+
+5. **A global lock held while waiting**: a single flag (or list entry) that
+   the handler checks, sets, and keeps set across a `task.wait(...)` /
+   `task.delay(...)`. It turns the remote into "once every N seconds for the
+   whole server", which bounds the work:
+
+   ```lua
+   local cooling = false
+
+   Remotes.Fireworks.OnServerEvent:Connect(function(player: Player)
+   	if cooling then
+   		return
+   	end
+   	cooling = true
+   	launchFireworks() -- Instance.new / :Clone()
+   	task.wait(10)
+   	cooling = false
+   end)
+   ```
 
 What is **not** enough:
 
-- **A single flag for everyone.** `local debounce = false` around the work
-  only stops two requests from overlapping. The exploiter fires again as
-  soon as the previous call returns, and while they do, real players are
-  turned away. Key the state by player.
+- **A single flag for everyone, released as soon as the work is done.**
+  `local debounce = false` around the work only stops two requests from
+  overlapping. The exploiter fires again as soon as the previous call
+  returns, and while they do, real players are turned away. Key the state by
+  player (or keep the flag set for a fixed time, as above).
 - **A guard that is never set.** `if crafting[player] then return end`
   does nothing if no code path of the handler assigns `crafting[player]`.
 - **A read that is not a guard.** `if summoned[player] then

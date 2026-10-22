@@ -184,7 +184,7 @@ fn collect_suffix<'e>(suffix: &'e Suffix, out: &mut Vec<&'e TokenReference>) {
 
 impl<'a> Analyzer<'a> {
     /// Evaluates without side effects (no calls analysed, nothing reported).
-    fn peek(
+    pub(crate) fn peek(
         &mut self,
         frame: &mut Frame<'a>,
         state: &mut State<'a>,
@@ -362,6 +362,20 @@ impl<'a> Analyzer<'a> {
         value.is_none_or(|v| is_verified(&v))
     }
 
+    /// `typeof(x)`, or a local holding it (`local kind = typeof(x)`): returns `x`.
+    fn typeof_arg_of(
+        &self,
+        frame: &Frame<'a>,
+        state: &State<'a>,
+        expr: &'a Expression,
+    ) -> Option<&'a Expression> {
+        if let Expression::Var(Var::Name(token)) = unwrap_expr(expr) {
+            let id = frame.lookup(&token_name(token))?;
+            return typeof_arg(state.vars.get(&id)?.defined_by?);
+        }
+        typeof_arg(expr)
+    }
+
     /// Variables whose size/value/location is measured by `expr`.
     fn measure_roots(
         &self,
@@ -466,33 +480,24 @@ impl<'a> Analyzer<'a> {
                     if let Prefix::Expression(inner) = var.prefix() {
                         let inner = unwrap_expr(inner);
                         if let Expression::BinaryOperator { lhs, rhs, .. } = inner {
-                            // A distance only proves where `x` is when the
-                            // other point is server data (or already verified).
-                            let mut roots = self.tainted_roots(frame, state, lhs);
-                            for root in self.tainted_roots(frame, state, rhs) {
-                                if !roots.contains(&root) {
-                                    roots.push(root);
-                                }
-                            }
-                            let verified: Vec<bool> = roots
-                                .iter()
-                                .map(|r| self.target_verified(frame, state, r))
-                                .collect();
-                            let mut out = Vec::new();
-                            for (i, root) in roots.iter().enumerate() {
-                                let others_ok =
-                                    verified.iter().enumerate().all(|(j, ok)| j == i || *ok);
-                                if others_ok {
-                                    out.push((root.clone(), Measure::Distance));
-                                }
-                            }
-                            return out;
+                            return self.distance_roots(frame, state, lhs, rhs);
                         }
                         return with(self.tainted_roots(frame, state, inner), Measure::Abs);
                     }
                     if let Prefix::Name(token) = var.prefix() {
                         if let Some(id) = frame.lookup(&token_name(token)) {
-                            return vec![(Target::Var(id), Measure::Abs)];
+                            let mut out = vec![(Target::Var(id), Measure::Abs)];
+                            // `local offset = target - root.Position; offset.Magnitude`
+                            let defined = state.vars.get(&id).and_then(|v| v.defined_by);
+                            if let Some(Expression::BinaryOperator {
+                                lhs,
+                                binop: BinOp::Minus(_),
+                                rhs,
+                            }) = defined.map(unwrap_expr)
+                            {
+                                out.extend(self.distance_roots(frame, state, lhs, rhs));
+                            }
+                            return out;
                         }
                     }
                 }
@@ -500,6 +505,35 @@ impl<'a> Analyzer<'a> {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// `(a - b).Magnitude`: a distance only proves where `a` is when the other
+    /// point is server data (or already verified).
+    fn distance_roots(
+        &self,
+        frame: &Frame<'a>,
+        state: &State<'a>,
+        lhs: &'a Expression,
+        rhs: &'a Expression,
+    ) -> Vec<(Target, Measure)> {
+        let mut roots = self.tainted_roots(frame, state, lhs);
+        for root in self.tainted_roots(frame, state, rhs) {
+            if !roots.contains(&root) {
+                roots.push(root);
+            }
+        }
+        let verified: Vec<bool> = roots
+            .iter()
+            .map(|r| self.target_verified(frame, state, r))
+            .collect();
+        let mut out = Vec::new();
+        for (i, root) in roots.iter().enumerate() {
+            let others_ok = verified.iter().enumerate().all(|(j, ok)| j == i || *ok);
+            if others_ok {
+                out.push((root.clone(), Measure::Distance));
+            }
+        }
+        out
     }
 
     /// What `cond` teaches on its true and false branches.
@@ -550,7 +584,13 @@ impl<'a> Analyzer<'a> {
                         self.condition_depth += 1;
                         let r = self.refine_condition(frame, state, condition);
                         self.condition_depth -= 1;
-                        r
+                        // The value itself may also prove something
+                        // (`local item = rawget(ITEMS, id)`).
+                        let own = self.refine_truthy(frame, state, expr);
+                        Refinement {
+                            on_true: r.on_true.union(&own.on_true),
+                            on_false: r.on_false.union(&own.on_false),
+                        }
                     }
                     _ => self.refine_truthy(frame, state, expr),
                 }
@@ -592,6 +632,53 @@ impl<'a> Analyzer<'a> {
         cmp: Cmp,
         rhs: &'a Expression,
     ) -> Refinement {
+        let r = self.refine_compare_values(frame, state, lhs, cmp, rhs);
+        if !matches!(cmp, Cmp::Eq | Cmp::Ne) {
+            return r;
+        }
+        let bool_literal = |e: &Expression| match unwrap_expr(e) {
+            Expression::Symbol(t) => match symbol_of(t) {
+                Some(Symbol::True) => Some(true),
+                Some(Symbol::False) => Some(false),
+                _ => None,
+            },
+            _ => None,
+        };
+        let (other, literal) = match (bool_literal(lhs), bool_literal(rhs)) {
+            (None, Some(b)) => (lhs, b),
+            (Some(b), None) => (rhs, b),
+            _ => return r,
+        };
+        // `x == true` is `x`, `x == false` is `not x`: `ALLOWED[k] == true`,
+        // `part:IsDescendantOf(plot) == false`, `busy[player] == true`.
+        let truthy = self.refine_condition(frame, state, other);
+        // A call to a check returns a boolean: not `true` means `false`.
+        let boolean = matches!(unwrap_expr(other), Expression::FunctionCall(_));
+        let (holds, fails) = if literal {
+            (truthy.on_true, truthy.on_false)
+        } else {
+            (truthy.on_false, truthy.on_true)
+        };
+        let fails = if boolean { fails } else { Facts::default() };
+        let (on_true, on_false) = if cmp == Cmp::Eq {
+            (holds, fails)
+        } else {
+            (fails, holds)
+        };
+        Refinement {
+            on_true: r.on_true.union(&on_true),
+            on_false: r.on_false.union(&on_false),
+        }
+    }
+
+    fn refine_compare_values(
+        &mut self,
+        frame: &mut Frame<'a>,
+        state: &mut State<'a>,
+        lhs: &'a Expression,
+        cmp: Cmp,
+        rhs: &'a Expression,
+    ) -> Refinement {
         // `x == nil` / `x ~= nil`
         if matches!(cmp, Cmp::Eq | Cmp::Ne) && (is_nil(lhs) || is_nil(rhs)) {
             let other = if is_nil(lhs) { rhs } else { lhs };
@@ -611,9 +698,9 @@ impl<'a> Analyzer<'a> {
         // `typeof(x) == "number"`
         if matches!(cmp, Cmp::Eq | Cmp::Ne) {
             let pattern = match (
-                typeof_arg(lhs),
+                self.typeof_arg_of(frame, state, lhs),
                 string_const(rhs),
-                typeof_arg(rhs),
+                self.typeof_arg_of(frame, state, rhs),
                 string_const(lhs),
             ) {
                 (Some(arg), Some(ty), _, _) | (_, _, Some(arg), Some(ty)) => Some((arg, ty)),
@@ -999,9 +1086,27 @@ impl<'a> Analyzer<'a> {
                         for func in funcs.iter() {
                             match func {
                                 Func::Builtin(Builtin::TableFind) => {
+                                    // luau-shield007: `if table.find(busy, player) then return end`
+                                    if let (Some(list), true) = (args.first(), self.entry.is_some())
+                                    {
+                                        self.pending_lock_reads.push(format!(
+                                            "{}@find",
+                                            super::compact(unwrap_expr(list))
+                                        ));
+                                    }
                                     if let (Some(list), Some(item)) = (args.first(), args.get(1)) {
                                         if !self.peek(frame, state, list).is_tainted() {
                                             if let Some(t) = self.target_of(frame, item) {
+                                                on_true.add(t, check::ALLOWLIST);
+                                            }
+                                        }
+                                    }
+                                }
+                                Func::Builtin(Builtin::Rawget) => {
+                                    // `if rawget(ITEMS, id) then`: like `ITEMS[id]`.
+                                    if let (Some(table), Some(key)) = (args.first(), args.get(1)) {
+                                        if !self.peek(frame, state, table).is_tainted() {
+                                            if let Some(t) = self.target_of(frame, key) {
                                                 on_true.add(t, check::ALLOWLIST);
                                             }
                                         }

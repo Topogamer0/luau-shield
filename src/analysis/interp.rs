@@ -260,9 +260,14 @@ pub(crate) fn is_condition(expr: &Expression) -> bool {
 }
 
 /// An expression measuring a value (`#x`, `(a - b).Magnitude`,
-/// `player:DistanceFromCharacter(p)`, `math.abs(x)`, `string.len(s)`).
+/// `player:DistanceFromCharacter(p)`, `math.abs(x)`, `string.len(s)`), or an
+/// offset whose magnitude is measured later (`a - b`).
 pub(crate) fn is_measure(expr: &Expression) -> bool {
     match unwrap_expr(expr) {
+        Expression::BinaryOperator {
+            binop: BinOp::Minus(_),
+            ..
+        } => true,
         Expression::UnaryOperator {
             unop: UnOp::Hash(_),
             ..
@@ -1346,6 +1351,19 @@ impl<'a> Analyzer<'a> {
                             falsy.add_checks(check::TYPE_BOOLEAN);
                             falsy.join(&right)
                         } else {
+                            // `cond and "yes" or "no"`: when the middle value is
+                            // truthy, the result is one of the two branches.
+                            if let Expression::BinaryOperator {
+                                binop: BinOp::And(_),
+                                rhs: middle,
+                                ..
+                            } = unwrap_expr(lhs)
+                            {
+                                let middle = self.peek(frame, state, middle);
+                                if middle.truthy_const() == Some(true) && !middle.is_tainted() {
+                                    return middle.join(&right);
+                                }
+                            }
                             left.join(&right)
                         }
                     }
@@ -1508,11 +1526,20 @@ impl<'a> Analyzer<'a> {
         };
         let count = suffixes.len();
         let mut last_client_argument: Option<Target> = None;
+        // `obj.Method` just read: the receiver, its text and the method name.
+        let mut dot_method: Option<(Value<'a>, String, String)> = None;
         for (i, suffix) in suffixes.iter().enumerate() {
             let is_last = i + 1 == count;
+            let receiver = dot_method.take();
             match suffix {
                 Suffix::Index(index) => {
                     let loc = self.loc(frame.file, *suffix);
+                    if let Index::Dot { name, .. } = index {
+                        let n = token_name(name);
+                        if n.starts_with(|c: char| c.is_ascii_uppercase()) {
+                            dot_method = Some((current.clone(), display.clone(), n));
+                        }
+                    }
                     let key = match index {
                         Index::Dot { name, .. } => {
                             let n = token_name(name);
@@ -1579,17 +1606,38 @@ impl<'a> Analyzer<'a> {
                                 (Some(e), Some(v)) => self.client_variable(frame, e, v),
                                 _ => None,
                             };
-                            results = self.call_value(
-                                frame,
-                                state,
-                                &current,
-                                arg_values,
-                                &arg_exprs,
-                                callee_path.as_deref(),
-                                &display,
-                                loc,
-                                statement && is_last,
-                            );
+                            // `obj.Method(obj, ...)` is `obj:Method(...)`.
+                            let method_call = receiver.filter(|(_, receiver_display, _)| {
+                                arg_exprs.first().map(|e| compact(*e)).as_ref()
+                                    == Some(receiver_display)
+                            });
+                            results = if let Some((receiver, receiver_display, name)) = method_call
+                            {
+                                self.call_method(
+                                    frame,
+                                    state,
+                                    &receiver,
+                                    &name,
+                                    arg_values[1..].to_vec(),
+                                    &arg_exprs[1..],
+                                    callee_path.as_deref(),
+                                    &receiver_display,
+                                    loc,
+                                    statement && is_last,
+                                )
+                            } else {
+                                self.call_value(
+                                    frame,
+                                    state,
+                                    &current,
+                                    arg_values,
+                                    &arg_exprs,
+                                    callee_path.as_deref(),
+                                    &display,
+                                    loc,
+                                    statement && is_last,
+                                )
+                            };
                             display.push_str("(...)");
                         }
                         Call::MethodCall(method) => {
@@ -1663,6 +1711,21 @@ impl<'a> Analyzer<'a> {
         }
         match unwrap_expr(expr) {
             Expression::Var(Var::Name(token)) => frame.lookup(&token_name(token)).map(Target::Var),
+            // `GetPlayerFromCharacter(accessory.Parent)`: the parent decides
+            // who owns the variable.
+            Expression::Var(Var::Expression(var)) => {
+                let Prefix::Name(token) = var.prefix() else {
+                    return None;
+                };
+                let parents = var.suffixes().all(|s| {
+                    matches!(s, Suffix::Index(Index::Dot { name, .. }) if token_name(name) == "Parent")
+                });
+                if parents {
+                    frame.lookup(&token_name(token)).map(Target::Var)
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -1713,7 +1776,9 @@ impl<'a> Analyzer<'a> {
                         Some(a) => a.join(v),
                     });
                 }
-                acc.unwrap_or_else(Value::nil)
+                // An empty table may be filled elsewhere (`sessions[player]`
+                // set in a PlayerAdded handler): the entry is unknown, not nil.
+                acc.unwrap_or_else(Value::unknown)
             }
             (Kind::Obj(obj), Key::Name(name)) => self.obj_member(obj, name, base),
             (Kind::Obj(obj), Key::Dynamic(..)) if obj.class == ObjClass::GlobalEnv => {

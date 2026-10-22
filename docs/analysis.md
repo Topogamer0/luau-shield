@@ -75,8 +75,12 @@ A value derived from untrusted data is untrusted. Taint flows through:
   `require("./Economy")` and `.luaurc` aliases (`require("@shared/Util")`).
   Instance paths are mapped to files through the Rojo project tree;
 - method references passed with their object, as in
-  `pcall(store.SetAsync, store, key, value)`, which is analysed as
-  `store:SetAsync(key, value)`;
+  `pcall(store.SetAsync, store, key, value)` or
+  `result.GetNonChatStringForBroadcastAsync(result)`, which are analysed as
+  method calls (`store:SetAsync(key, value)`);
+- methods of objects created somewhere else, such as a session object stored
+  in `sessions[player]` by a `PlayerAdded` handler: `session:addCoins(amount)`
+  is analysed when exactly one class required by the file defines `addCoins`;
 - calls to unknown functions: the result is conservatively considered tainted
   if any argument is tainted.
 
@@ -121,6 +125,22 @@ A value accumulates *facts*. Each rule decides which facts are enough
 
 A boolean value that passed a type check (`typeof(x) == "boolean"`) is always
 considered safe: there are only two possible values.
+
+Checks keep working when their parts are stored in locals first, as long as
+the check is on the original variable:
+
+```lua
+local ok, reason = validateAmount(amount)   -- then: if not ok then return end
+local kind = typeof(value)                   -- then: if kind ~= "boolean" then return end
+local distance = (target - root.Position).Magnitude
+local offset = target - root.Position        -- then: if offset.Magnitude > 40 then return end
+local item = rawget(ITEMS, itemId)           -- like ITEMS[itemId]
+```
+
+Comparisons with `true` and `false` work like the condition itself
+(`part:IsDescendantOf(plot) == false`, `ALLOWED[x] == true`), and
+`cond and "A" or "B"` with a client-controlled `cond` is one of two server
+values, like `if cond then "A" else "B"`.
 
 Checkers built with the [`t`](https://github.com/osyrisrblx/t) library give the
 facts of the checkers they are made of: `t.number` gives *type + NaN rejected*,
@@ -194,6 +214,11 @@ Static analysis is an approximation and can be wrong in both directions:
   rely on names (`leaderstats`, `Coins`, `Cash`, `GetDataStore`, ...).
 - A check that is present but wrong (for example a bound that is too large)
   is considered a check.
+- Checks made on each element in one loop (`for _, part in parts do if not
+  part:IsDescendantOf(plot) then return end end`) do not carry over to a
+  second loop over the same collection: check and act in the same loop.
+- A validation function that checks values it captures (upvalues) instead of
+  its parameters does not protect the caller's variables.
 
 When the analyzer is wrong, suppress the finding with a comment and a reason:
 

@@ -618,7 +618,8 @@ fn relaxed_json(text: &str) -> String {
 }
 
 fn parse(text: &str, display: &str) -> (Option<Ast>, Option<ParseFailure>) {
-    let result = full_moon::parse_fallible(text, LuaVersion::luau());
+    let text = blank_bracket_attributes(text);
+    let result = full_moon::parse_fallible(&text, LuaVersion::luau());
     if let Some(error) = result.errors().first() {
         let (start, _) = error.range();
         return (
@@ -632,4 +633,117 @@ fn parse(text: &str, display: &str) -> (Option<Ast>, Option<ParseFailure>) {
         );
     }
     (Some(result.into_ast()), None)
+}
+
+/// Replaces bracketed function attributes (`@[native]`,
+/// `@[deprecated{reason = "..."}]`), which the parser does not support yet,
+/// with spaces. Lines and columns are unchanged, and attributes do not change
+/// what the code does with client data.
+fn blank_bracket_attributes(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains("@[") {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = chars.clone();
+    let len = chars.len();
+    // `[[`, `[==[`: the number of `=` signs.
+    let long_bracket = |i: usize| -> Option<usize> {
+        if chars.get(i) != Some(&'[') {
+            return None;
+        }
+        let level = chars[i + 1..].iter().take_while(|c| **c == '=').count();
+        (chars.get(i + 1 + level) == Some(&'[')).then_some(level)
+    };
+    let skip_long = |i: usize, level: usize| -> usize {
+        let mut j = i + level + 2;
+        while j < len {
+            if chars[j] == ']'
+                && chars[j + 1..].iter().take(level).all(|c| *c == '=')
+                && chars.get(j + 1 + level) == Some(&']')
+            {
+                return j + level + 2;
+            }
+            j += 1;
+        }
+        len
+    };
+    let skip_string = |i: usize| -> usize {
+        let quote = chars[i];
+        let mut j = i + 1;
+        while j < len && chars[j] != quote {
+            if chars[j] == '\\' {
+                j += 1;
+            } else if chars[j] == '\n' && quote != '`' {
+                break;
+            }
+            j += 1;
+        }
+        j + 1
+    };
+    let mut i = 0;
+    while i < len {
+        match chars[i] {
+            '-' if chars.get(i + 1) == Some(&'-') => {
+                i = match long_bracket(i + 2) {
+                    Some(level) => skip_long(i + 2, level),
+                    None => {
+                        let mut j = i;
+                        while j < len && chars[j] != '\n' {
+                            j += 1;
+                        }
+                        j
+                    }
+                };
+            }
+            '[' if long_bracket(i).is_some() => {
+                i = skip_long(i, long_bracket(i).unwrap_or(0));
+            }
+            '"' | '\'' | '`' => i = skip_string(i),
+            '@' if chars.get(i + 1) == Some(&'[') => {
+                let mut depth = 0usize;
+                let mut j = i + 1;
+                while j < len {
+                    match chars[j] {
+                        '[' | '{' | '(' => depth += 1,
+                        ']' | '}' | ')' => {
+                            depth = depth.saturating_sub(1);
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        '"' | '\'' | '`' => {
+                            j = skip_string(j);
+                            continue;
+                        }
+                        _ => {}
+                    }
+                    j += 1;
+                }
+                for c in out.iter_mut().take((j + 1).min(len)).skip(i) {
+                    if *c != '\n' {
+                        *c = ' ';
+                    }
+                }
+                i = j + 1;
+            }
+            _ => i += 1,
+        }
+    }
+    std::borrow::Cow::Owned(out.into_iter().collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bracket_attributes_are_blanked() {
+        let code = "@[native]\nlocal function f() end\n@[deprecated{reason = \"x]\"}] function g() end\nlocal s = \"@[keep]\" -- @[keep]\n";
+        let blanked = blank_bracket_attributes(code);
+        assert_eq!(blanked.len(), code.len());
+        assert!(!blanked.contains("native") && !blanked.contains("deprecated"));
+        assert_eq!(blanked.matches("@[keep]").count(), 2);
+        assert_eq!(blanked.lines().count(), code.lines().count());
+        assert!(parse(code, "a.luau").1.is_none());
+    }
 }

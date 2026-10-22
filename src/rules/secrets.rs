@@ -49,7 +49,10 @@ fn patterns() -> &'static [Pattern] {
             ("Google API key", r"\bAIza[0-9A-Za-z_\-]{35}"),
             ("Stripe live key", r"\b(?:sk|rk)_live_[0-9A-Za-z]{20,}"),
             ("Telegram bot token", r"\b\d{8,10}:[A-Za-z0-9_\-]{35}\b"),
-            (".ROBLOSECURITY cookie", r"_\|WARNING:-DO-NOT-SHARE-THIS\."),
+            (
+                ".ROBLOSECURITY cookie",
+                r"_\|WARNING:-DO-NOT-SHARE-THIS\.[^|]*\|_[A-Za-z0-9+/=_\-]{8,}",
+            ),
             (
                 "private key",
                 r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP |ENCRYPTED )?PRIVATE KEY",
@@ -192,9 +195,43 @@ fn credential_like(value: &str, password: bool) -> bool {
                 .iter()
                 .all(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_lowercase()));
     }
+    // Names made of words (`PlayerTokens_v3_live`, a DataStore name) are not
+    // random enough to be generated credentials; passwords can be words.
+    if !password && word_like(value) {
+        return false;
+    }
     let letters = value.chars().any(|c| c.is_ascii_alphabetic());
     let digits = value.chars().any(|c| c.is_ascii_digit());
     letters && (digits || (password && value.len() >= 12))
+}
+
+/// `PlayerTokens_v3_live`, `dragon-slayer-legendary-001`: every part is a
+/// word (letters only), a number or very short. Generated keys mix letters
+/// and digits in long runs.
+fn word_like(value: &str) -> bool {
+    value
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .flat_map(split_camel_case)
+        .all(|part| {
+            part.len() <= 3
+                || part.chars().all(|c| c.is_ascii_alphabetic())
+                || (part.len() <= 4 && part.chars().all(|c| c.is_ascii_digit()))
+        })
+}
+
+/// `PlayerTokens` -> `Player`, `Tokens`.
+fn split_camel_case(segment: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let bytes = segment.as_bytes();
+    for i in 1..bytes.len() {
+        if bytes[i].is_ascii_uppercase() && bytes[i - 1].is_ascii_lowercase() {
+            parts.push(&segment[start..i]);
+            start = i;
+        }
+    }
+    parts.push(&segment[start..]);
+    parts
 }
 
 fn redact(value: &str) -> String {
@@ -250,7 +287,16 @@ impl SecretVisitor {
                 continue;
             }
             if let Some(m) = pattern.regex.find(text) {
-                if is_placeholder(m.as_str()) {
+                // The cookie's warning prefix is fixed text: check the value.
+                let value = match m.as_str().rsplit_once("|_") {
+                    Some((_, body)) if pattern.kind == ".ROBLOSECURITY cookie" => body,
+                    _ => m.as_str(),
+                };
+                if is_placeholder(value) {
+                    continue;
+                }
+                // `sk-dragon-slayer-legendary-001` is an item id, not a key.
+                if pattern.kind == "OpenAI API key" && word_like(&m.as_str()[3..]) {
                     continue;
                 }
                 let start = token.start_position();
@@ -392,6 +438,12 @@ mod tests {
         assert!(hits(r#"local passwordHint = "Must be 8 characters""#).is_empty());
         assert!(hits(r#"local API_KEY = "sk-your-key-here-0000000000000000""#).is_empty());
         assert!(hits(r#"local TOKEN_ICON = "rbxassetid://1234567890123""#).is_empty());
+        assert!(hits(r#"local TOKEN_STORE_NAME = "PlayerTokens_v3_live""#).is_empty());
+        assert!(hits(r#"local skin = "sk-dragon-slayer-legendary-001""#).is_empty());
+        assert!(
+            hits(r#"local warning = "never share _|WARNING:-DO-NOT-SHARE-THIS. with anyone""#)
+                .is_empty()
+        );
         assert_eq!(
             hits(
                 r#"local u = "https://hooks.hyra.io/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyzABCDEF""#

@@ -146,6 +146,8 @@ pub fn render(report: &Report) -> String {
                     "rules": rules,
                 }
             },
+            // Columns count characters, not UTF-16 code units.
+            "columnKind": "unicodeCodePoints",
             "invocations": [{
                 "executionSuccessful": true,
                 "toolExecutionNotifications": notifications,

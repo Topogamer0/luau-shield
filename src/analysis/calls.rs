@@ -711,11 +711,18 @@ impl<'a> Analyzer<'a> {
                 return vec![result];
             }
         }
-        if callee.is_tainted() {
+        // Functions cannot be sent over a remote: a callee that is (part of)
+        // what the client sent is not a function the client chose. Only a
+        // function looked up with client data (`_G[name]`) is.
+        if callee.flows.iter().any(|f| !f.raw) {
+            let chosen = Value {
+                flows: callee.flows.iter().filter(|f| !f.raw).cloned().collect(),
+                ..callee.clone()
+            };
             self.check_value(
                 RuleId::Ls004,
                 SinkKind::Code,
-                callee,
+                &chosen,
                 loc,
                 &format!("chooses the function called by `{display}(...)`"),
             );
@@ -1250,7 +1257,10 @@ impl<'a> Analyzer<'a> {
                 let key = arg(1);
                 let key = match key.str_const() {
                     Some(s) if !key.is_tainted() => Key::Name(Rc::from(s)),
-                    _ => Key::Dynamic(key, None),
+                    _ => {
+                        let target = arg_exprs.get(1).and_then(|e| self.target_of(frame, e));
+                        Key::Dynamic(key, target)
+                    }
                 };
                 vec![self.index_value(&arg(0), key, loc, display, "[...]")]
             }
@@ -1305,6 +1315,11 @@ impl<'a> Analyzer<'a> {
                         let what = format!("is inserted into `{}`", compact(*expr));
                         self.check_value(RuleId::Ls001, SinkKind::Economy, &value, loc, &what);
                     }
+                }
+                // luau-shield007: `table.insert(busy, player)` marks the player busy.
+                if let (Some(expr), true) = (arg_exprs.first(), value.player_rel) {
+                    let lock = format!("{}@find", compact(unwrap_expr(expr)));
+                    self.note_lock_write(&lock, &value, true);
                 }
                 if let Some(expr) = arg_exprs.first() {
                     if let Some(target) = self.target_of(frame, expr) {
@@ -1465,7 +1480,10 @@ impl<'a> Analyzer<'a> {
             return Value::obj(ObjClass::TLibrary, None, "t");
         }
         match file {
-            Some(id) if self.project.files[id].kind == ScriptKind::Module => self.eval_module(id),
+            Some(id) if self.project.files[id].kind == ScriptKind::Module => {
+                self.required.entry(frame.file).or_default().insert(id);
+                self.eval_module(id)
+            }
             _ => Value::unknown().with_path(format!("require({display})")),
         }
     }
@@ -1626,6 +1644,21 @@ impl<'a> Analyzer<'a> {
         ) {
             return v;
         }
+        // `session:addCoins(amount)` on an object created somewhere else (in
+        // a PlayerAdded handler): when exactly one class required by this
+        // file defines the method, call it.
+        if matches!(recv.kind, Kind::Unknown)
+            && !recv.is_tainted()
+            && args.iter().any(Value::is_tainted)
+        {
+            if let Some(method) = self.unique_required_method(frame.file, name) {
+                let mut full_args = vec![recv.clone()];
+                full_args.extend(args);
+                return self.call_method_closure(
+                    frame, state, &method, full_args, arg_exprs, loc, statement, &display,
+                );
+            }
+        }
         // Unknown method.
         let mut result = Value::unknown();
         if recv.is_tainted() {
@@ -1689,6 +1722,34 @@ impl<'a> Analyzer<'a> {
         result.player_rel = recv.player_rel;
         result.path = Some(Rc::from(format!("{display}()").as_str()));
         vec![result]
+    }
+
+    /// The method `name` when exactly one table returned by a module that
+    /// `file` requires defines it with `function Class:name()`.
+    fn unique_required_method(&self, file: usize, name: &str) -> Option<Value<'a>> {
+        let mut found: Option<Value<'a>> = None;
+        for module in self.required.get(&file)? {
+            let Some(ModuleState::Done(exports)) = self.modules.get(module) else {
+                continue;
+            };
+            let Kind::Table(table) = &exports.kind else {
+                continue;
+            };
+            let Some(field) = table.fields.get(name) else {
+                continue;
+            };
+            let is_method = field
+                .funcs()
+                .iter()
+                .any(|f| matches!(f, Func::Closure(c) if c.is_method));
+            if is_method {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(field.clone());
+            }
+        }
+        found
     }
 
     #[allow(clippy::too_many_arguments)]

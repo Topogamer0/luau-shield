@@ -6,7 +6,7 @@ being checked enough.
 
 | Severity | Default | Applies to |
 | --- | --- | --- |
-| high | enabled | server code (Scripts, server modules and the modules they require); never `*.client.luau` LocalScripts |
+| high | enabled | server code: Scripts, server modules and every module they reach (replicated or of unknown context); never `*.client.luau` LocalScripts or modules in client folders |
 
 ## What it detects
 
@@ -57,14 +57,20 @@ The sinks are:
    PlayerData[player].Cash = amount
    ```
 
-   Also any write with a **client-controlled key** into a persistent-data
-   container, that is a table whose access path contains `data`, `profile`,
-   `save`, `inventory`, `stats` or `session`:
+   A *persistent-data container* is a table whose access path contains one
+   of the words `data`, `profile`, `save`, `inventory`, `stats` or `session`
+   (also with an `s`: `sessions`, `profiles`); local aliases keep the path
+   (`local inventory = profile.Data.Inventory`). Any write with a
+   **client-controlled key** into such a container, or into a table whose
+   path contains a stat word, is a sink, whatever the value:
 
    ```lua
    data.Inventory[itemName] = true
-   profile.Data.Pets[petId] = true
+   inventory[itemId] = (inventory[itemId] or 0) + count
    ```
+
+   A client value written to any other field of a persistent-data container
+   (`profile.Data.Title = title`) is checked the same way as a stat field.
 
 3. **Stat attributes.** `instance:SetAttribute(name, value)` when `name` is a
    stat word (`"Coins"`, `"Level"`, ...). Other attribute names are covered by
@@ -75,11 +81,23 @@ The sinks are:
    `UpdateAsync` the value is whatever the transform function returns. The
    receiver is a store obtained from `DataStoreService:GetDataStore`,
    `GetOrderedDataStore` or `GetGlobalDataStore`, or any variable whose name
-   contains `Store`.
+   contains `Store` (or `store`).
 
 5. **MemoryStores.** `SetAsync`, `UpdateAsync`, `AddAsync` and `RemoveAsync`
    on objects obtained from `MemoryStoreService:GetSortedMap`, `GetQueue` or
    `GetHashMap`.
+
+For DataStores and MemoryStores the first argument is the key (except for a
+queue's `AddAsync`, whose first argument is the value) and every other
+argument is checked as a value: the saved value, but also a sort key or a
+queue priority. A table is checked through its fields, so a table literal
+built from client values and then saved is reported on the save:
+
+```lua
+local record = { Score = 0, SavedAt = os.time() }
+record.Score = result.score -- not reported: a fresh table is just a message
+arcadeStore:SetAsync(`arcade_{player.UserId}`, record) -- reported here
+```
 
 The finding is reported on the line of the assignment or of the method call.
 When the write happens inside a helper (for example `Economy.addCoins` in a
@@ -210,8 +228,20 @@ safe when it is:
 - a **string** with a type check and a length limit (`#s <= 20`), or an
   anchored pattern (`s:match("^%w+$")`).
 
-The same requirements apply to client-controlled **keys** (DataStore keys,
-`data.Inventory[itemName]`).
+Client-controlled **keys** (DataStore keys, `data.Inventory[itemName]`) are
+held to a stricter standard, because a key decides *which* entry is written:
+it must be allow-listed, validated, matched by an anchored pattern, or a
+number with all four facts. A type check plus a length limit is enough for a
+string *value* such as a pet nickname, but not for a key: `#itemName <= 20`
+still lets the client name any item.
+
+```lua
+-- the key is built on the server; the client only picks one of its slots
+if not table.find(SLOTS, slot) then
+	return
+end
+slotStore:RemoveAsync(`slot_{player.UserId}_{slot}`)
+```
 
 Number checks that are enough:
 
@@ -245,8 +275,9 @@ What is **not** a check:
 
 - **Type annotations.** `function(player, amount: number)` receives whatever
   the client sends: Luau types are erased at runtime.
-- **A type check alone.** `typeof(amount) == "number"` (or `t.number`) lets
-  `1e9`, `-1e9` and NaN through.
+- **A type check alone.** `typeof(amount) == "number"` lets `1e9`, `-1e9`
+  and NaN through, and `tonumber(x)` is no better. `t.number` also rejects
+  NaN, but any size still passes.
 - **One bound.** `amount > 0` alone, `amount <= coins.Value` alone, or
   `math.max(0, x)` leave the other side open: a negative gift or a huge
   reward still works.
@@ -254,9 +285,8 @@ What is **not** a check:
   `if amount <= 0 or amount > 100 then return end` does not reject NaN,
   because both comparisons are false for NaN. Add `amount ~= amount` to the
   guard, or write the bounds in the "must be true" form.
-- **`math.clamp`, `math.min`, `math.max`.** They give bounds but return NaN
-  when given NaN.
-- **`tonumber(x)` alone.** It gives the type, nothing else.
+- **`math.clamp`, `math.min`, `math.max`.** They give bounds, but NaN can
+  come out of them: `math.clamp(0 / 0, 1, 100)` is NaN.
 - **Unanchored searches.** `string.find(key, tostring(player.UserId))` or
   `key:match("%d+")` do not constrain the rest of the string.
 
@@ -293,6 +323,23 @@ What is **not** a check:
   (`local preview = {}; preview.Coins = offer.coins`) are not reported, since
   such a table is usually a reply or a message. If that table is then saved,
   the DataStore call is what gets checked.
+- **Keys checked by a pattern.** An anchored pattern is accepted for keys.
+  That is right for a namespaced DataStore key (`clan_<name>` with
+  `^%w+$`: no other key can be reached), but `itemName:match("^%w+$")`
+  before `data.Inventory[itemName] = true` still lets the client name any
+  item and is not reported. Allow-list item ids against your catalog.
+- **NaN rejections that are not recognised.** Only `x == x`, `x ~= x` and
+  comparisons that must be true reject NaN for luau-shield. Some code is
+  NaN-safe in other ways and is still reported:
+  `if x % 1 ~= 0 then return end` (`NaN % 1` is NaN), `math.max(1, x)`
+  (Luau keeps the first argument when a later one is NaN, so the order
+  matters), or `t.number(x)` followed by bounds written as
+  `if x < 1 or x > 100 then return end` (the real `t.number` rejects NaN,
+  but luau-shield gives it only the type fact). Add an explicit `x ~= x`
+  test or use `t.numberConstrained`.
+- **Checks on a different copy.** `local amount = req.amount` taken *before*
+  `req.amount` is checked does not receive the facts of that check. Check
+  the variable you write, or copy after checking.
 - **Unknown functions.** The result of a call to an unresolved function is
   considered client-controlled when one of its arguments is, which can cause
   false positives; declare the function as a

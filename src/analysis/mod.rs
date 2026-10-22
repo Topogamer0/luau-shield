@@ -151,6 +151,8 @@ pub struct Analyzer<'a> {
     entry: Option<EntryCtx>,
     /// Nesting of conditions followed through variables (`local ok = ...`).
     condition_depth: u32,
+    /// `T[player]` tests seen while refining the current `if` condition.
+    pending_lock_reads: Vec<String>,
     budget: usize,
     pending: Vec<Pending<'a>>,
     analysed_entries: HashSet<(usize, usize, usize, usize)>,
@@ -193,6 +195,7 @@ impl<'a> Analyzer<'a> {
             module_eval: 0,
             entry: None,
             condition_depth: 0,
+            pending_lock_reads: Vec::new(),
             budget: ENTRY_BUDGET,
             pending: Vec::new(),
             analysed_entries: HashSet::new(),

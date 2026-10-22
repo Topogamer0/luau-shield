@@ -1,8 +1,10 @@
 --!strict
--- Vulnerable: weekly high scores kept in a MemoryStore sorted map. The client
--- computes its own score and submits it; t.number only proves it is a number.
+-- Vulnerable: weekly high scores kept in a MemoryStore sorted map, with the
+-- score as the sort key so the board can be read in order. The client
+-- computes its own score and submits it; t.number only proves that it is a
+-- number (t also rejects NaN), nothing bounds it.
 --
--- Exploit: fire SubmitScore with 1e308 to take first place on every server's
+-- Exploit: fire SubmitScore with 1e15 to take first place on every server's
 -- leaderboard for the week.
 
 local MemoryStoreService = game:GetService("MemoryStoreService")
@@ -27,5 +29,5 @@ SubmitScore.OnServerEvent:Connect(function(player: Player, score: number)
 	if not t.number(score) then
 		return
 	end
-	weeklyScores:SetAsync(tostring(player.UserId), score, WEEK) -- expect: luau-shield001
+	weeklyScores:SetAsync(tostring(player.UserId), score, WEEK, score) -- expect: luau-shield001
 end)

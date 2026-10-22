@@ -13,8 +13,12 @@ local pending: { [Player]: { from: Player, expires: number } } = {}
 
 Remotes.RequestTrade.OnServerEvent:Connect(function(player: Player, targetUserId: number)
 	local target = Players:GetPlayerByUserId(targetUserId)
-	if not target or target == player or pending[target] then
+	if not target or target == player then
 		return
+	end
+	local existing = pending[target]
+	if existing and os.clock() < existing.expires then
+		return -- the target is still answering another request
 	end
 	pending[target] = { from = player, expires = os.clock() + 15 }
 	TradeRequest:FireClient(target, player.Name)
@@ -30,4 +34,8 @@ TradeAnswer.OnServerEvent:Connect(function(player: Player, accepted: boolean)
 		return
 	end
 	print(`trade {request.from.Name} -> {player.Name}: {if accepted then "accepted" else "declined"}`)
+end)
+
+Players.PlayerRemoving:Connect(function(player: Player)
+	pending[player] = nil
 end)

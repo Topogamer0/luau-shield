@@ -47,6 +47,14 @@ client value is still a finding. Server-side movement and combat checks trust
 what the server sets, so a `WalkSpeed` or a teleport chosen by the client is a
 speed or teleport hack with the server's blessing.
 
+Compound assignments are assignments too: `humanoid.Health -= damage` with a
+client `damage` is reported.
+
+When the value is read from an Instance that the client sent
+(`root.CFrame = pad.CFrame`, where `pad` is a remote argument), the problem is
+the unverified Instance: that sink is reported as
+[luau-shield003](luau-shield003.md) instead.
+
 The finding is reported on the line of the assignment or of the method call,
 also when that line is in a helper function or in a required module.
 
@@ -117,15 +125,16 @@ Remotes.MeleeHit.OnServerEvent:Connect(function(attacker: Player, victimUserId: 
 	local attackerCharacter = attacker.Character
 	local tool = if attackerCharacter then attackerCharacter:FindFirstChildOfClass("Tool") else nil
 	local weapon = if tool then WEAPONS[tool.Name] else nil
+	local attackerRoot = if attackerCharacter then attackerCharacter:FindFirstChild("HumanoidRootPart") :: BasePart? else nil
 
 	local victim = Players:GetPlayerByUserId(victimUserId)
 	local character = if victim and victim ~= attacker then victim.Character else nil
 	local root = if character then character:FindFirstChild("HumanoidRootPart") :: BasePart? else nil
 	local humanoid = if character then character:FindFirstChildOfClass("Humanoid") else nil
-	if not weapon or not root or not humanoid then
+	if not weapon or not attackerRoot or not root or not humanoid then
 		return
 	end
-	if attacker:DistanceFromCharacter(root.Position) > weapon.range then
+	if (root.Position - attackerRoot.Position).Magnitude > weapon.range then
 		return
 	end
 
@@ -162,7 +171,12 @@ lets execution continue protects nothing.
 Values the server computes itself are not client-controlled at all. That
 includes values read from server tables or folders with a client key:
 `WEAPONS[tool.Name].damage`, `Checkpoints:FindFirstChild(name).CFrame`,
-`ROTATIONS[index]`.
+`ROTATIONS[index]`. A client value that only *chooses* between server values
+does not reach the sink either:
+
+```lua
+humanoid.WalkSpeed = if sprinting then SPRINT_SPEED else WALK_SPEED -- not reported
+```
 
 For a client value, one of the following is enough:
 
@@ -256,7 +270,16 @@ label.Text = result:GetNonChatStringForBroadcastAsync()
 ```
 
 A length limit (`#name <= 20`, `message:sub(1, 60)`) is not filtering, and
-`chest:IsA("Model")` is a type check, not ownership.
+`chest:IsA("Model")` is a type check, not ownership. Filtering one part of a
+string does not clean the rest: in `` `[{clanTag}] {filteredTitle}` `` the
+clan tag is still unfiltered.
+
+Strings written anywhere else (`SetAttribute("Title", title)`) have no bounds
+in the numeric sense: a length limit is only an upper bound and an anchored
+pattern is not a luau-shield002 fact. Allow-list them (`TITLES[title]`,
+`t.literal(...)`), or check them with a validator luau-shield trusts (an
+unresolved `is...`/`validate...` function or a custom sanitizer); a local
+validation function only contributes the facts it actually checks.
 
 **Not checks:**
 
@@ -270,8 +293,29 @@ A length limit (`#name <= 20`, `message:sub(1, 60)`) is not filtering, and
 ## Limitations
 
 - **The quality of a bound is not judged.** `math.clamp(speed, 0, 1e6)` is a
-  lower and an upper bound and passes. Choose bounds that make sense for the
-  game.
+  lower and an upper bound and passes. So does
+  `humanoid.Health = math.clamp(humanoid.Health + amount, 0, humanoid.MaxHealth)`
+  with an unchecked `amount`, although a negative `amount` clamps to 0 and
+  kills. Choose bounds that make sense for the game, and bound the client
+  value itself.
+- **A bound per request is not a bound per second.** luau-shield002 looks at
+  one call at a time. A bounded `ApplyImpulse` fired every frame still builds
+  an unbounded velocity, and a bounded heal fired every frame is god mode.
+  Add a cooldown: [luau-shield007](luau-shield007.md) only asks for one when the
+  handler does expensive work.
+- **`DistanceFromCharacter` counts as a distance check**, but it returns 0
+  when the player has no character, so
+  `if player:DistanceFromCharacter(p) > R then return end` lets a player
+  without a character through. Measure from the `HumanoidRootPart` and
+  require it to exist.
+- **The audience of filtered text is not checked.** The output of
+  `GetNonChatStringForUserAsync` and `GetChatForUserAsync` is accepted even
+  when it is shown to everybody; text displayed to other players needs
+  `GetNonChatStringForBroadcastAsync`.
+- **`cond and A or B` with a client `cond` is reported.** `and` can return its
+  left operand, so the result is treated as client-controlled even when `A`
+  and `B` are server values. Write it as `if cond then A else B`, which is not
+  reported.
 - **NaN is not required.** A check written as `if x < 8 or x > 32 then return end`
   lets NaN through, and a NaN position or velocity can break physics. Add
   `if x ~= x then return end` where that matters.

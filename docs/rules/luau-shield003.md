@@ -24,7 +24,7 @@ These are uses:
 
 | Use | Examples |
 | --- | --- |
-| Calling a method on it, other than a read-only query or a string method | `part:Destroy()`, `tool:Clone()`, `model:PivotTo(cf)`, `door:SetAttribute("Open", true)`, `crate:BreakJoints()` |
+| Calling a method on it, or on something reached through it, other than a read-only query or a string method | `part:Destroy()`, `tool:Clone()`, `model:PivotTo(cf)`, `door:SetAttribute("Open", true)`, `hitPart.Parent:FindFirstChildOfClass("Humanoid"):TakeDamage(20)` |
 | Assigning any property on it, or on something reached through it | `door.CanCollide = false`, `tool.Parent = player.Character`, `part.Color = color`, `tool.Handle.CanCollide = false` |
 | Passing it to `Debris:AddItem`, `CollectionService:AddTag` or `CollectionService:RemoveTag` | `Debris:AddItem(crate, 1)`, `CollectionService:RemoveTag(coin, "Coin")` |
 | Using data read from it in an [luau-shield001](luau-shield001.md) or [luau-shield002](luau-shield002.md) sink | `coins.Value += chest:GetAttribute("Reward")`, `cash.Value += tool.Price.Value` (once `tool` is known to be an Instance), `humanoid.WalkSpeed = pad:GetAttribute("Speed")` |
@@ -198,7 +198,12 @@ if player:DistanceFromCharacter(chest.Position) > 12 then return end
 
 The container you compare with must be a server value (`player.Character`,
 a plot the server looked up). `part:IsDescendantOf(otherClientInstance)`
-proves nothing.
+proves nothing: the exploiter sends `(otherPlot, block)` or
+`(workspace, anything)`. The same goes for the reference point of a distance
+check: `(ore.Position - hitPosition).Magnitude < 4` with a `hitPosition` sent
+by the client only proves that the two arguments agree with each other
+(the exploiter sends `ore.Position`). Measure from the character's
+`HumanoidRootPart`.
 
 **Allow-listed.** The Instance is one of a fixed set the server knows:
 
@@ -244,6 +249,11 @@ and the model is still unverified.
   exploiter sends. Luau types are erased at runtime.
 - Checks on something else, such as the player's character being alive, or a
   cooldown. They are useful, but they do not tie the Instance to the player.
+- Checks that do not stop the handler. `if car.Owner.Value ~= player then
+  warn(...) end` followed by `car:Destroy()` destroys the car anyway. A check
+  written inside one branch (`if action == "Equip" then ... end`) does not
+  protect the other branches either, and the client chooses the branch: do
+  the check once, before dispatching.
 
 Values that need checking for other rules keep their own requirements: a
 number read from a verified Instance is server data, but a number sent by the
@@ -272,6 +282,25 @@ rejection) before it goes into `leaderstats`.
   are not followed either (see [Limits](../analysis.md#6-limits)).
 - **Read-only methods come from a fixed list.** A harmless method that is not
   in the list above (for example `GetDebugId()`) counts as a use.
+- **A verified client Instance is not accepted as an anchor.** When the client
+  sends both the plot and the block, checking the plot
+  (`plot:GetAttribute("Owner") == player.UserId`) and then
+  `block:IsDescendantOf(plot)` is safe, but the block is still reported,
+  because the container is a client value. Look the plot up on the server
+  instead (`Plots:FindFirstChild(tostring(player.UserId))`), which also saves
+  an argument.
+- **The `Owner` ObjectValue is recognised in its direct form.**
+  `model.Owner.Value == player` is an ownership check; reading the same
+  object through a local (`local owner = model:FindFirstChild("Owner")`, then
+  `owner.Value == player`) is not linked back to `model`, and later uses of
+  `model` are reported. Use the direct form or an `Owner` attribute.
+- **Distance checks trust the character's position.** The client controls
+  the physics of its own character, so an exploiter can teleport next to each
+  target before firing the remote. A distance check stops "from anywhere"
+  attacks, not a teleporting autofarm; pair it with server-side movement
+  checks for valuable actions. Note also that `player:DistanceFromCharacter()`
+  measures from the Head and returns `0` when the character has no Head, so
+  check that the Head exists (or measure from the `HumanoidRootPart`).
 - **Ownership is not permission.** luau-shield003 checks that the Instance belongs to
   the player or is near them, not that the action is allowed right now: a
   chest the player stands next to can still be opened twice if the handler

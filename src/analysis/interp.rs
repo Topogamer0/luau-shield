@@ -472,8 +472,10 @@ impl<'a> Analyzer<'a> {
             Stmt::If(stmt) => {
                 let mut condition_state = state;
                 let cond_value = self.eval(frame, &mut condition_state, stmt.condition());
+                self.pending_lock_reads.clear();
                 let refinement =
                     self.refine_condition(frame, &mut condition_state, stmt.condition());
+                let lock_reads = std::mem::take(&mut self.pending_lock_reads);
                 let mut then_state = condition_state.clone();
                 self.apply_facts(&mut then_state, &refinement.on_true);
                 if let Some(binding) = stmt.binding() {
@@ -483,6 +485,20 @@ impl<'a> Analyzer<'a> {
                 let then_end = self.exec_block(frame, stmt.block(), then_state);
                 if stmt.binding().is_some() {
                     frame.scopes.pop();
+                }
+                // luau-shield007 lock pattern: `if busy[player] then return end`
+                // (or the work guarded by `if not busy[player] then ... end`).
+                let negated = matches!(
+                    unwrap_expr(stmt.condition()),
+                    Expression::UnaryOperator {
+                        unop: UnOp::Not(_),
+                        ..
+                    }
+                );
+                if then_end.dead || negated {
+                    if let Some(entry) = self.entry.as_mut() {
+                        entry.lock_reads.extend(lock_reads);
+                    }
                 }
                 let mut ends = vec![then_end];
                 let mut else_state = condition_state;
@@ -857,7 +873,9 @@ impl<'a> Analyzer<'a> {
                 }
                 // luau-shield007 lock pattern: `busy[player] = true`.
                 if let Key::Dynamic(key_value, _) = &key {
-                    if key_value.player_rel {
+                    if key_value.player_rel
+                        && !matches!(value.kind, Kind::Nil | Kind::Bool(Some(false)))
+                    {
                         if let Some(entry) = self.entry.as_mut() {
                             entry.lock_writes.insert(base_display.clone());
                         }
@@ -1250,6 +1268,12 @@ impl<'a> Analyzer<'a> {
                                 _ => Kind::Unknown,
                             };
                             v
+                        } else if is_and {
+                            // Only `false`/`nil` can come out of the left side of
+                            // `and`: those values are harmless booleans.
+                            let mut falsy = left.clone();
+                            falsy.add_checks(check::TYPE_BOOLEAN);
+                            falsy.join(&right)
                         } else {
                             left.join(&right)
                         }
@@ -1401,6 +1425,10 @@ impl<'a> Analyzer<'a> {
             Prefix::Expression(expr) => (self.eval(frame, state, expr), None),
             _ => (Value::unknown(), None),
         };
+        let root_id = match prefix {
+            Prefix::Name(token) => frame.lookup(&token_name(token)),
+            _ => None,
+        };
         let mut results = vec![current.clone()];
         let mut display = compact(prefix);
         let mut callee_path: Option<Vec<String>> = match prefix {
@@ -1522,6 +1550,14 @@ impl<'a> Analyzer<'a> {
                     current = results.first().cloned().unwrap_or_else(Value::nil);
                 }
                 _ => {}
+            }
+        }
+        // Remember which client variable a derived value came from.
+        if count > 0 {
+            if let (Some(id), Some(first)) = (root_id, results.first_mut()) {
+                if first.is_tainted() && first.origin.is_none() {
+                    first.origin = Some(Target::Var(id));
+                }
             }
         }
         results

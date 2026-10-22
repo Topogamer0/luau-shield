@@ -74,25 +74,43 @@ fn patterns() -> &'static [Pattern] {
 /// Placeholder values that are obviously not real secrets.
 fn is_placeholder(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
-    const MARKERS: &[&str] = &[
-        "your",
-        "here",
+    // Markers that are placeholders wherever they appear.
+    const ANYWHERE: &[&str] = &[
         "xxxx",
-        "example",
-        "placeholder",
-        "insert",
-        "changeme",
-        "change_me",
-        "todo",
-        "fixme",
-        "dummy",
         "<",
         "{",
-        "replace",
-        "redacted",
         "****",
+        "...",
+        "placeholder",
+        "changeme",
+        "change_me",
     ];
-    if MARKERS.iter().any(|m| lower.contains(m)) {
+    if ANYWHERE.iter().any(|m| lower.contains(m)) {
+        return true;
+    }
+    // Markers that must be whole words (`YOUR_KEY_HERE`, `sk-your-key`), so
+    // that `WhereIsMyPassword42` is not a placeholder.
+    const WORDS: &[&str] = &[
+        "your", "here", "example", "insert", "todo", "fixme", "dummy", "replace", "redacted",
+        "secret", "token", "key", "password",
+    ];
+    let words = identifier_words(value);
+    let placeholder_words = words.iter().filter(|w| WORDS.contains(&w.as_str())).count();
+    if words.iter().any(|w| {
+        matches!(
+            w.as_str(),
+            "your"
+                | "here"
+                | "example"
+                | "insert"
+                | "todo"
+                | "fixme"
+                | "dummy"
+                | "replace"
+                | "redacted"
+        )
+    }) || (placeholder_words > 0 && placeholder_words == words.len())
+    {
         return true;
     }
     let mut chars = value.chars();
@@ -126,6 +144,9 @@ fn secret_name(name: &str) -> bool {
         "bearer",
         "credential",
         "cookie",
+        "authkey",
+        "authtoken",
+        "passphrase",
         "robloxsecurity",
     ];
     if JOINED.iter().any(|w| joined.contains(w)) {
@@ -137,18 +158,36 @@ fn secret_name(name: &str) -> bool {
 }
 
 /// A literal that looks like a credential (long, no spaces, mixed characters).
-fn credential_like(value: &str) -> bool {
+/// Names that always hold a secret, even when it is a plain word
+/// (`ADMIN_PASSWORD = "PurpleMonkeyDishwasher"`).
+fn password_name(name: &str) -> bool {
+    let joined = name.to_ascii_lowercase().replace(['_', '-'], "");
+    ["password", "passwd", "passphrase", "secret"]
+        .iter()
+        .any(|w| joined.contains(w))
+}
+
+fn credential_like(value: &str, password: bool) -> bool {
     let value = value
         .strip_prefix("Bearer ")
         .or_else(|| value.strip_prefix("Bot "))
         .or_else(|| value.strip_prefix("Basic "))
         .unwrap_or(value);
-    if value.len() < 16 || value.contains(char::is_whitespace) || is_placeholder(value) {
+    if value.len() < 16 || is_placeholder(value) {
         return false;
+    }
+    if value.contains(char::is_whitespace) {
+        // A passphrase: several lowercase words under a password-like name.
+        let words: Vec<&str> = value.split(' ').collect();
+        return password
+            && words.len() >= 3
+            && words
+                .iter()
+                .all(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_lowercase()));
     }
     let letters = value.chars().any(|c| c.is_ascii_alphabetic());
     let digits = value.chars().any(|c| c.is_ascii_digit());
-    letters && digits
+    letters && (digits || (password && value.len() >= 12))
 }
 
 fn redact(value: &str) -> String {
@@ -191,7 +230,7 @@ impl SecretVisitor {
         }
         if let Expression::String(token) = expr {
             if let TokenType::StringLiteral { literal, .. } = token.token().token_type() {
-                if credential_like(literal) {
+                if credential_like(literal, password_name(name)) {
                     self.add(span_of(token), "credential", literal);
                 }
             }
@@ -343,5 +382,23 @@ mod tests {
         assert!(hits(r#"local author = "Builderman2024Studios""#).is_empty());
         assert!(hits(r#"local tokenLabel = "Tokens collected: 10""#).is_empty());
         assert!(hits(r#"local url = "https://games.roblox.com/v1/games""#).is_empty());
+        assert!(hits(r#"local passwordHint = "Must be 8 characters""#).is_empty());
+        assert!(hits(r#"local API_KEY = "sk-your-key-here-0000000000000000""#).is_empty());
+    }
+
+    #[test]
+    fn passwords_and_auth_names() {
+        assert_eq!(
+            hits(r#"local ADMIN_PASSWORD = "PurpleMonkeyDishwasherLadder""#),
+            ["credential"]
+        );
+        assert_eq!(
+            hits(r#"local ADMIN_PASSWORD = "WhereIsMyPassword42""#),
+            ["credential"]
+        );
+        assert_eq!(
+            hits(r#"local AUTHKEY = "a8f3k29dk3l2m9x0q7w6e5r4""#),
+            ["credential"]
+        );
     }
 }

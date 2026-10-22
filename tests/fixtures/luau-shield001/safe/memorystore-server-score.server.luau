@@ -47,11 +47,11 @@ SubmitRun.OnServerEvent:Connect(function(player: Player)
 
 	local score = run.score
 	local ok, err = pcall(function()
-		weeklyScores:UpdateAsync(tostring(player.UserId), function(best: number?): number?
+		weeklyScores:UpdateAsync(tostring(player.UserId), function(best: number?, _sortKey: any): (number?, number?)
 			if best and best >= score then
-				return nil
+				return nil -- not a new best: cancel the write
 			end
-			return score
+			return score, score -- the score is also the sort key of the board
 		end, WEEK)
 	end)
 	if not ok then

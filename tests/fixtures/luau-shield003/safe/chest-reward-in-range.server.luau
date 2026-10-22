@@ -3,6 +3,9 @@
 -- player:DistanceFromCharacter(chest.Position) is a location check on the
 -- chest, so reading its reward and marking it opened is fine. (The reward
 -- itself comes from a server-set attribute, so it is not client data.)
+-- DistanceFromCharacter measures from the character's Head and returns 0
+-- when there is no Head, so the handler requires one: a headless character
+-- would otherwise pass any range check.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -14,7 +17,11 @@ local function onOpenChest(player: Player, chest: BasePart)
 	if typeof(chest) ~= "Instance" or not chest:IsA("BasePart") then
 		return
 	end
-	if not player.Character or player:DistanceFromCharacter(chest.Position) > OPEN_RANGE then
+	local character = player.Character
+	if not character or not character:FindFirstChild("Head") then
+		return
+	end
+	if player:DistanceFromCharacter(chest.Position) > OPEN_RANGE then
 		return
 	end
 	if chest:GetAttribute("Opened") then

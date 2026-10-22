@@ -4,8 +4,8 @@
 -- checking that such an item exists or that a drop of it is near the player.
 --
 -- Exploit: Knit exposes Client methods as remotes, so the exploiter calls
--- InventoryService.PickUp("DeveloperHammer") and owns any item, including
--- ones that never spawn in the world.
+-- Knit.GetService("InventoryService"):PickUp("DeveloperHammer") and owns any
+-- item, including ones that never spawn in the world.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

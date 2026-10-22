@@ -3,7 +3,7 @@
 -- is only type-checked: no length limit, no filtering, and the remote has no
 -- rate limit either (luau-shield007).
 --
--- Exploit: an exploiter fires ReportPlayer in a loop with 2000-character
+-- Exploit: an exploiter fires ReportPlayer in a loop with 1900-character
 -- reasons full of "@everyone" pings, scam links and slurs. The moderators'
 -- channel is flooded, Discord rate-limits and then deletes the webhook, and
 -- the game can be reported for the content it relayed. The loop also uses up

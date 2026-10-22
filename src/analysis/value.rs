@@ -423,6 +423,10 @@ pub struct Value<'a> {
     /// The boolean condition this value was computed from
     /// (`local ok = isValid(x)`): testing the value tests the condition.
     pub condition: Option<&'a Expression>,
+    /// The client Instance variable this value was read from
+    /// (`local owner = car:FindFirstChild("Owner")`): verifying the value's
+    /// ownership also verifies the Instance.
+    pub origin: Option<Target>,
 }
 
 impl<'a> Value<'a> {
@@ -584,6 +588,11 @@ impl<'a> Value<'a> {
             condition: match (self.condition, other.condition) {
                 (Some(a), Some(b)) if std::ptr::eq(a, b) => Some(a),
                 _ => None,
+            },
+            origin: if self.origin == other.origin {
+                self.origin.clone()
+            } else {
+                None
             },
         }
     }

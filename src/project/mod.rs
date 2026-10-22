@@ -211,6 +211,25 @@ fn context_for(kind: ScriptKind, location: &[String]) -> RunContext {
     }
 }
 
+/// Context of a file placed by the Rojo project: the service at the root of
+/// its instance path decides, inner folder names are only a fallback.
+fn context_for_instance(kind: ScriptKind, instance: &[String]) -> RunContext {
+    if kind != ScriptKind::Module {
+        return context_for(kind, instance);
+    }
+    match instance.first().map(String::as_str) {
+        Some("ServerScriptService" | "ServerStorage") => RunContext::Server,
+        Some(
+            "ReplicatedStorage" | "Workspace" | "Lighting" | "Teams" | "SoundService" | "Chat"
+            | "TextChatService" | "MaterialService",
+        ) => RunContext::Shared,
+        Some("ReplicatedFirst" | "StarterPlayer" | "StarterGui" | "StarterPack") => {
+            RunContext::Client
+        }
+        _ => context_for(kind, instance),
+    }
+}
+
 fn find_upwards(start: &Path, name: &str) -> Option<PathBuf> {
     let mut dir = Some(start);
     while let Some(d) = dir {
@@ -320,7 +339,7 @@ impl Project {
             };
             let kind = script_kind(&path);
             let (instance_path, context) = match mapped.get(&path) {
-                Some(inst) => (inst.clone(), context_for(kind, inst)),
+                Some(inst) => (inst.clone(), context_for_instance(kind, inst)),
                 None => {
                     let rel = path.strip_prefix(&base_dir).unwrap_or(&path);
                     let mut inst = vec!["@fs".to_string()];

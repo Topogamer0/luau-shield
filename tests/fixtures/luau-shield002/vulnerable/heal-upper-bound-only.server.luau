@@ -36,7 +36,7 @@ function handlers.Heal(medic: Player, targetUserId: number, amount: number)
 	humanoid.Health = math.min(humanoid.Health + amount, humanoid.MaxHealth) -- expect: luau-shield002
 end
 
--- Fine: the amount is a server constant.
+-- No luau-shield002 finding here: the amount is a server constant.
 function handlers.Bandage(medic: Player)
 	local humanoid = getHumanoid(medic)
 	if humanoid and humanoid.Health > 0 then

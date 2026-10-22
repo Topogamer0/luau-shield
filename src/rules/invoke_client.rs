@@ -4,9 +4,11 @@
 use crate::analysis::{compact, span_of, token_name};
 use crate::finding::Loc;
 use full_moon::ast::{
-    AnonymousFunction, Assignment, Call, FunctionCall, Index, Prefix, Suffix, Var, VarExpression,
+    AnonymousFunction, Assignment, Call, Expression, FunctionArgs, FunctionCall,
+    FunctionDeclaration, Index, LocalFunction, Prefix, Suffix, Var, VarExpression,
 };
 use full_moon::visitors::Visitor;
+use std::collections::HashSet;
 
 pub struct InvokeHit {
     pub loc: Loc,
@@ -21,13 +23,21 @@ struct InvokeVisitor {
     /// Depth of functions defined inside such calls.
     detached_functions: usize,
     function_stack: Vec<bool>,
+    named_stack: Vec<bool>,
+    /// Named functions that only ever run in a detached thread.
+    detached_names: HashSet<String>,
     hits: Vec<InvokeHit>,
 }
 
 fn is_spawn_call(call: &FunctionCall) -> bool {
+    spawn_kind(call).is_some()
+}
+
+/// `Some(index of the function argument)` for calls that start a new thread.
+fn spawn_kind(call: &FunctionCall) -> Option<usize> {
     let mut path = match call.prefix() {
         Prefix::Name(token) => vec![token_name(token)],
-        _ => return false,
+        _ => return None,
     };
     // `task.spawn(f)`, `coroutine.wrap(f)()`: the path up to the first call.
     let mut called = false;
@@ -38,23 +48,86 @@ fn is_spawn_call(call: &FunctionCall) -> bool {
                 called = true;
                 break;
             }
-            _ => return false,
+            _ => return None,
         }
     }
     if !called {
-        return false;
+        return None;
     }
     let path: Vec<&str> = path.iter().map(String::as_str).collect();
-    matches!(
-        path.as_slice(),
-        ["task", "spawn" | "defer" | "delay"]
-            | ["coroutine", "wrap" | "create"]
-            | ["spawn"]
-            | ["delay"]
-    )
+    match path.as_slice() {
+        ["task", "delay"] | ["delay"] => Some(1),
+        ["task", "spawn" | "defer"] | ["coroutine", "wrap" | "create"] | ["spawn"] => Some(0),
+        _ => None,
+    }
+}
+
+/// The arguments of the first call of a call chain, and the callee path
+/// before it (`M.collect` for `M.collect(p)`).
+fn first_call(call: &FunctionCall) -> Option<(String, Vec<&Expression>)> {
+    let mut path = match call.prefix() {
+        Prefix::Name(token) => token_name(token),
+        _ => return None,
+    };
+    for suffix in call.suffixes() {
+        match suffix {
+            Suffix::Index(Index::Dot { name, .. }) => {
+                path.push('.');
+                path.push_str(&token_name(name));
+            }
+            Suffix::Call(Call::AnonymousCall(args)) => {
+                return match &**args {
+                    FunctionArgs::Parentheses { arguments, .. } => {
+                        Some((path, arguments.iter().collect()))
+                    }
+                    _ => None,
+                };
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Functions passed by name to `task.spawn` & co, and functions called directly.
+#[derive(Default)]
+struct SpawnedNames {
+    spawned: HashSet<String>,
+    called: HashSet<String>,
+}
+
+impl Visitor for SpawnedNames {
+    fn visit_function_call(&mut self, call: &FunctionCall) {
+        let Some((path, args)) = first_call(call) else {
+            return;
+        };
+        match spawn_kind(call) {
+            Some(index) => {
+                if let Some(Expression::Var(var)) = args.get(index) {
+                    self.spawned.insert(compact(var));
+                }
+            }
+            None => {
+                self.called.insert(path);
+            }
+        }
+    }
 }
 
 impl InvokeVisitor {
+    fn enter_named(&mut self, detached: bool) {
+        if detached {
+            self.detached_functions += 1;
+        }
+        self.named_stack.push(detached);
+    }
+
+    fn leave_named(&mut self) {
+        if self.named_stack.pop() == Some(true) {
+            self.detached_functions -= 1;
+        }
+    }
+
     fn check_suffixes<'s>(&mut self, prefix: &Prefix, suffixes: impl Iterator<Item = &'s Suffix>) {
         let mut shown = compact(prefix);
         for suffix in suffixes {
@@ -82,6 +155,32 @@ impl InvokeVisitor {
 }
 
 impl Visitor for InvokeVisitor {
+    fn visit_local_function(&mut self, function: &LocalFunction) {
+        let detached = self.detached_names.contains(&token_name(function.name()));
+        self.enter_named(detached);
+    }
+
+    fn visit_local_function_end(&mut self, _function: &LocalFunction) {
+        self.leave_named();
+    }
+
+    fn visit_function_declaration(&mut self, function: &FunctionDeclaration) {
+        let name = function
+            .name()
+            .names()
+            .iter()
+            .map(token_name)
+            .collect::<Vec<_>>()
+            .join(".");
+        let detached =
+            function.name().method_name().is_none() && self.detached_names.contains(&name);
+        self.enter_named(detached);
+    }
+
+    fn visit_function_declaration_end(&mut self, _function: &FunctionDeclaration) {
+        self.leave_named();
+    }
+
     fn visit_function_call(&mut self, call: &FunctionCall) {
         self.spawn_calls.push(is_spawn_call(call));
         self.check_suffixes(call.prefix(), call.suffixes());
@@ -141,12 +240,21 @@ pub fn find_invoke_client(
     ast: &full_moon::ast::Ast,
     server_script: bool,
 ) -> Vec<InvokeHit> {
+    let mut names = SpawnedNames::default();
+    names.visit_ast(ast);
+    let detached_names = names
+        .spawned
+        .into_iter()
+        .filter(|name| !names.called.contains(name))
+        .collect();
     let mut visitor = InvokeVisitor {
         file,
         check_assignments: server_script,
         spawn_calls: Vec::new(),
         detached_functions: 0,
         function_stack: Vec::new(),
+        named_stack: Vec::new(),
+        detached_names,
         hits: Vec::new(),
     };
     visitor.visit_ast(ast);

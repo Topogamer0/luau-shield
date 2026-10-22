@@ -57,11 +57,12 @@ pub(crate) fn has_rate_limit_word(text: &str) -> bool {
 /// The `t` library member `name`.
 pub(crate) fn t_member(name: &str) -> Validator {
     let checks = match name {
-        "number" => check::TYPE_NUMBER,
+        "number" => check::TYPE_NUMBER | check::NAN_SAFE,
         "string" => check::TYPE_STRING,
         "boolean" => check::TYPE_BOOLEAN,
         "table" => check::TYPE_TABLE,
         "Instance" => check::TYPE_INSTANCE,
+        // t.number and t.integer reject NaN (`t.nan` accepts it).
         "integer" => check::TYPE_NUMBER | check::NAN_SAFE,
         "numberPositive" => check::TYPE_NUMBER | check::LOWER | check::NAN_SAFE,
         "numberNegative" => check::TYPE_NUMBER | check::UPPER | check::NAN_SAFE,
@@ -1143,17 +1144,38 @@ impl<'a> Analyzer<'a> {
                     arg_exprs.iter().skip(skip).copied().collect();
                 let callee_display = arg_exprs.first().map(|e| compact(*e)).unwrap_or_default();
                 let mut s = state.clone();
-                let results = self.call_value(
-                    frame,
-                    &mut s,
-                    &callee,
-                    rest,
-                    &rest_exprs,
-                    None,
-                    &callee_display,
-                    loc,
-                    false,
-                );
+                // `pcall(store.SetAsync, store, key, value)` is `store:SetAsync(key, value)`.
+                let method = arg_exprs
+                    .first()
+                    .and_then(|e| method_reference(e, rest_exprs.first().copied()));
+                let results = match method {
+                    Some((receiver_display, name)) => {
+                        let receiver = rest.first().cloned().unwrap_or_default();
+                        self.call_method(
+                            frame,
+                            &mut s,
+                            &receiver,
+                            &name,
+                            rest[1..].to_vec(),
+                            &rest_exprs[1..],
+                            None,
+                            &receiver_display,
+                            loc,
+                            false,
+                        )
+                    }
+                    None => self.call_value(
+                        frame,
+                        &mut s,
+                        &callee,
+                        rest,
+                        &rest_exprs,
+                        None,
+                        &callee_display,
+                        loc,
+                        false,
+                    ),
+                };
                 // The call may fail at any point: keep the state of both outcomes.
                 *state = std::mem::take(state).join(s);
                 let mut out = vec![Value::of(Kind::Bool(None))];
@@ -1794,6 +1816,36 @@ impl<'a> Analyzer<'a> {
         };
         Some(vec![result])
     }
+}
+
+/// `obj.Method` passed together with `obj` (as in `pcall(obj.Method, obj, ...)`):
+/// returns the receiver text and the method name.
+fn method_reference(
+    callee: &Expression,
+    receiver: Option<&Expression>,
+) -> Option<(String, String)> {
+    let receiver = receiver?;
+    let Expression::Var(full_moon::ast::Var::Expression(var)) = unwrap_expr(callee) else {
+        return None;
+    };
+    let suffixes: Vec<&full_moon::ast::Suffix> = var.suffixes().collect();
+    let (last, init) = suffixes.split_last()?;
+    let full_moon::ast::Suffix::Index(full_moon::ast::Index::Dot { name, .. }) = last else {
+        return None;
+    };
+    let mut base = compact(var.prefix());
+    for suffix in init {
+        base.push_str(&compact(*suffix));
+    }
+    if base != compact(receiver) {
+        return None;
+    }
+    let name = token_name(name);
+    // Only method-like names (PascalCase Roblox methods).
+    if !name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+        return None;
+    }
+    Some((base, name))
 }
 
 /// `setmetatable(object, Class)`: methods reachable through `__index` (or

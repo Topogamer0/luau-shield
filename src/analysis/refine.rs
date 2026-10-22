@@ -64,6 +64,17 @@ fn type_checks(name: &str) -> Checks {
     }
 }
 
+/// A server value, or a client Instance whose ownership was already verified
+/// (a valid anchor for `IsDescendantOf` / distance checks).
+fn is_verified(value: &Value<'_>) -> bool {
+    // While summarising a validation function, the other parameters are
+    // placeholders for what the caller passes (usually server data).
+    value
+        .flows
+        .iter()
+        .all(|f| f.any(check::OWNERSHIP | check::TRUSTED) || f.source.kind == SourceKind::Probe)
+}
+
 /// A Lua pattern anchored at both ends (`^%w+$`).
 fn anchored(pattern: &str) -> bool {
     pattern.starts_with('^') && pattern.ends_with('$') && !pattern.ends_with("%$")
@@ -183,6 +194,24 @@ impl<'a> Analyzer<'a> {
         v
     }
 
+    /// The pattern string passed to `match`/`find`, also through a constant.
+    fn pattern_of(
+        &mut self,
+        frame: &mut Frame<'a>,
+        state: &mut State<'a>,
+        expr: Option<&'a Expression>,
+    ) -> Option<String> {
+        let expr = expr?;
+        if let Some(s) = string_const(expr) {
+            return Some(s);
+        }
+        let value = self.peek(frame, state, expr);
+        if value.is_tainted() {
+            return None;
+        }
+        value.str_const().map(str::to_string)
+    }
+
     pub(crate) fn apply_facts(&self, state: &mut State<'a>, facts: &Facts) {
         for (target, checks) in &facts.map {
             state.add_checks(target, *checks);
@@ -235,6 +264,35 @@ impl<'a> Analyzer<'a> {
             }
         }
         out
+    }
+
+    /// `targets` plus the Instances they were read from.
+    fn with_origins(&self, state: &State<'a>, targets: Vec<Target>) -> Vec<Target> {
+        let mut out = targets.clone();
+        for target in &targets {
+            if let Target::Var(id) = target {
+                if let Some(origin) = state.vars.get(id).and_then(|v| v.origin.clone()) {
+                    if !out.contains(&origin) {
+                        out.push(origin);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Is the value of this variable server data or a verified Instance?
+    fn target_verified(&self, frame: &Frame<'a>, state: &State<'a>, target: &Target) -> bool {
+        let Target::Var(id) = target else {
+            return false;
+        };
+        let value = state.vars.get(id).cloned().or_else(|| {
+            self.statics
+                .get(&frame.file)
+                .and_then(|s| s.get(id))
+                .cloned()
+        });
+        value.is_none_or(|v| is_verified(&v))
     }
 
     /// Variables whose size/value/location is measured by `expr`.
@@ -331,12 +389,26 @@ impl<'a> Analyzer<'a> {
                     if let Prefix::Expression(inner) = var.prefix() {
                         let inner = unwrap_expr(inner);
                         if let Expression::BinaryOperator { lhs, rhs, .. } = inner {
-                            let mut out =
-                                with(self.tainted_roots(frame, state, lhs), Measure::Distance);
-                            out.extend(with(
-                                self.tainted_roots(frame, state, rhs),
-                                Measure::Distance,
-                            ));
+                            // A distance only proves where `x` is when the
+                            // other point is server data (or already verified).
+                            let mut roots = self.tainted_roots(frame, state, lhs);
+                            for root in self.tainted_roots(frame, state, rhs) {
+                                if !roots.contains(&root) {
+                                    roots.push(root);
+                                }
+                            }
+                            let verified: Vec<bool> = roots
+                                .iter()
+                                .map(|r| self.target_verified(frame, state, r))
+                                .collect();
+                            let mut out = Vec::new();
+                            for (i, root) in roots.iter().enumerate() {
+                                let others_ok =
+                                    verified.iter().enumerate().all(|(j, ok)| j == i || *ok);
+                                if others_ok {
+                                    out.push((root.clone(), Measure::Distance));
+                                }
+                            }
                             return out;
                         }
                         return with(self.tainted_roots(frame, state, inner), Measure::Abs);
@@ -435,8 +507,8 @@ impl<'a> Analyzer<'a> {
                     for s in init {
                         base.push_str(&super::compact(*s));
                     }
-                    if let Some(entry) = self.entry.as_mut() {
-                        entry.lock_reads.insert(base);
+                    if self.entry.is_some() {
+                        self.pending_lock_reads.push(base);
                     }
                 }
             }
@@ -563,7 +635,7 @@ impl<'a> Analyzer<'a> {
                 if literal || matches!(unwrap_expr(side), Expression::Var(Var::Name(_))) {
                     continue;
                 }
-                for root in self.tainted_roots(frame, state, side) {
+                for root in self.with_origins(state, self.tainted_roots(frame, state, side)) {
                     let facts = check::OWNERSHIP | check::TYPE_INSTANCE;
                     if cmp == Cmp::Eq {
                         r.on_true.add(root, facts);
@@ -631,7 +703,8 @@ impl<'a> Analyzer<'a> {
         if !bare_var {
             // `inst.Parent == player.Character`, `inst:GetAttribute("Owner") == player.UserId`
             if matches!(cmp, Cmp::Eq | Cmp::Ne) && !is_literal && !matches!(other.kind, Kind::Nil) {
-                for root in self.tainted_roots(frame, state, tainted_expr) {
+                for root in self.with_origins(state, self.tainted_roots(frame, state, tainted_expr))
+                {
                     if Some(&root) == direct.as_ref() {
                         continue;
                     }
@@ -703,7 +776,10 @@ impl<'a> Analyzer<'a> {
                     }
                     "IsDescendantOf" => {
                         let anchor_trusted = match args.first() {
-                            Some(e) => !self.peek(frame, state, e).is_tainted(),
+                            Some(e) => {
+                                let anchor = self.peek(frame, state, e);
+                                is_verified(&anchor)
+                            }
                             None => false,
                         };
                         if anchor_trusted {
@@ -713,14 +789,14 @@ impl<'a> Analyzer<'a> {
                         }
                     }
                     "IsAncestorOf" => {
-                        if !recv.is_tainted() {
+                        if is_verified(&recv) {
                             if let Some(t) = args.first().and_then(|e| self.target_of(frame, e)) {
                                 on_true.add(t, check::OWNERSHIP | check::TYPE_INSTANCE);
                             }
                         }
                     }
                     "match" | "find" if recv.is_tainted() => {
-                        let pattern = args.first().and_then(|e| string_const(e));
+                        let pattern = self.pattern_of(frame, state, args.first().copied());
                         if let Some(t) = recv_target {
                             let mut facts = check::TYPE_STRING;
                             if pattern.as_deref().is_some_and(anchored) {
@@ -801,12 +877,9 @@ impl<'a> Analyzer<'a> {
                                         args.first().and_then(|e| self.target_of(frame, e))
                                     {
                                         let mut facts = check::TYPE_STRING;
-                                        if args
-                                            .get(1)
-                                            .and_then(|e| string_const(e))
-                                            .as_deref()
-                                            .is_some_and(anchored)
-                                        {
+                                        let pattern =
+                                            self.pattern_of(frame, state, args.get(1).copied());
+                                        if pattern.as_deref().is_some_and(anchored) {
                                             facts |= check::PATTERN;
                                         }
                                         on_true.add(t, facts);

@@ -1,0 +1,7 @@
+{
+  "name": "fixture",
+  "tree": {
+    "$className": "DataModel",
+    "Workspace": { "Shopkeeper": { "$path": "src/shopkeeper" } }
+  }
+}

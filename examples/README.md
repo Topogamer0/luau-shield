@@ -34,8 +34,8 @@ luau-shield check examples/vulnerable-game --project examples/vulnerable-game/de
 Other useful variations:
 
 ```sh
-luau-shield check examples/vulnerable-game -s high                       # only high and critical
-luau-shield check examples/vulnerable-game --only luau-shield003                  # a single rule
+luau-shield check examples/vulnerable-game -s high                    # only high and critical
+luau-shield check examples/vulnerable-game --only luau-shield003      # a single rule
 luau-shield check examples/vulnerable-game --format sarif -o results.sarif
 luau-shield check examples/vulnerable-game --format json -o findings.json
 ```

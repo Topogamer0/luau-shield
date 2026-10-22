@@ -78,14 +78,14 @@ cargo install --git https://github.com/Topogamer0/luau-shield --locked
 ## Usage
 
 ```sh
-luau-shield check                       # analyse the current directory
-luau-shield check src                   # analyse a directory
+luau-shield check                                # analyse the current directory
+luau-shield check src                            # analyse a directory
 luau-shield check --format json -o report.json
 luau-shield check --format sarif -o luau-shield.sarif
-luau-shield check --min-severity high   # only high and critical findings
+luau-shield check --min-severity high            # only high and critical findings
 luau-shield check --disable luau-shield007       # turn a rule off
-luau-shield rules                       # list the rules
-luau-shield init                        # write a starter luau-shield.toml
+luau-shield rules                                # list the rules
+luau-shield init                                 # write a starter luau-shield.toml
 ```
 
 | Option | Meaning |

@@ -165,6 +165,9 @@ pub struct Flow {
     /// The last function named like a sanitizer (`Look.sanitize`) that
     /// returned this value: findings suggest declaring it in the configuration.
     pub via: Option<Rc<Via>>,
+    /// The permission guard (`Admins.isAdmin(player)`) that made this flow
+    /// `PRIVILEGED`, named in downgraded findings.
+    pub guard: Option<Rc<str>>,
 }
 
 /// A sanitizer-like function a value went through.
@@ -186,6 +189,7 @@ impl Flow {
             raw: true,
             instance_data: false,
             via: None,
+            guard: None,
         }
     }
 
@@ -450,6 +454,9 @@ pub struct Value<'a> {
     /// (`local owner = car:FindFirstChild("Owner")`): verifying the value's
     /// ownership also verifies the Instance.
     pub origin: Option<Target>,
+    /// luau-shield007: the state expression this local was read from
+    /// (`local current = state[player]`), as a state key.
+    pub alias: Option<Rc<str>>,
 }
 
 impl<'a> Value<'a> {
@@ -577,6 +584,67 @@ impl<'a> Value<'a> {
         }
     }
 
+    /// Renames the sanitizer-like function recorded as `from` to the way it
+    /// was called (`Look.sanitize` declared, `L.sanitize` called).
+    pub fn rename_via_deep(&mut self, from: &str, to: &str) {
+        self.rename_via_at(from, to, 0);
+    }
+
+    fn rename_via_at(&mut self, from: &str, to: &str, depth: usize) {
+        for flow in &mut self.flows {
+            if let Some(via) = &flow.via {
+                if &*via.name == from {
+                    flow.via = Some(Rc::new(Via {
+                        name: Rc::from(to),
+                        analysed: via.analysed,
+                    }));
+                }
+            }
+        }
+        if depth > 6 {
+            return;
+        }
+        if let Kind::Table(table) = &self.kind {
+            let mut table = (**table).clone();
+            for value in table.fields.values_mut() {
+                value.rename_via_at(from, to, depth + 1);
+            }
+            if let Some(dynamic) = table.dynamic.as_mut() {
+                dynamic.rename_via_at(from, to, depth + 1);
+            }
+            self.kind = Kind::Table(Rc::new(table));
+        }
+    }
+
+    /// Forgets `defined_by` here and in every stored value.
+    pub fn clear_defined_by_deep(&mut self) {
+        self.clear_defined_by_at(0);
+    }
+
+    fn clear_defined_by_at(&mut self, depth: usize) {
+        self.defined_by = None;
+        if depth > 6 {
+            return;
+        }
+        if let Kind::Table(table) = &self.kind {
+            let needs = table
+                .fields
+                .values()
+                .chain(table.dynamic.as_deref())
+                .any(|v| v.defined_by.is_some() || matches!(v.kind, Kind::Table(_)));
+            if needs {
+                let mut table = (**table).clone();
+                for value in table.fields.values_mut() {
+                    value.clear_defined_by_at(depth + 1);
+                }
+                if let Some(dynamic) = table.dynamic.as_mut() {
+                    dynamic.clear_defined_by_at(depth + 1);
+                }
+                self.kind = Kind::Table(Rc::new(table));
+            }
+        }
+    }
+
     /// Records that the value (and everything stored in it) was returned by
     /// the sanitizer-like function `via`.
     pub fn set_via_deep(&mut self, via: &Rc<Via>) {
@@ -597,6 +665,32 @@ impl<'a> Value<'a> {
             }
             if let Some(dynamic) = table.dynamic.as_mut() {
                 dynamic.set_via_at(via, depth + 1);
+            }
+            self.kind = Kind::Table(Rc::new(table));
+        }
+    }
+
+    /// Marks the value, and everything stored in it, as only reachable after
+    /// the permission guard `guard` succeeded.
+    pub fn privilege_deep(&mut self, guard: &Rc<str>) {
+        self.privilege_at(guard, 0);
+    }
+
+    fn privilege_at(&mut self, guard: &Rc<str>, depth: usize) {
+        for flow in &mut self.flows {
+            flow.checks |= check::PRIVILEGED;
+            flow.guard = Some(guard.clone());
+        }
+        if depth > 6 {
+            return;
+        }
+        if let Kind::Table(table) = &self.kind {
+            let mut table = (**table).clone();
+            for value in table.fields.values_mut() {
+                value.privilege_at(guard, depth + 1);
+            }
+            if let Some(dynamic) = table.dynamic.as_mut() {
+                dynamic.privilege_at(guard, depth + 1);
             }
             self.kind = Kind::Table(Rc::new(table));
         }
@@ -661,6 +755,11 @@ impl<'a> Value<'a> {
             },
             origin: if self.origin == other.origin {
                 self.origin.clone()
+            } else {
+                None
+            },
+            alias: if self.alias == other.alias {
+                self.alias.clone()
             } else {
                 None
             },

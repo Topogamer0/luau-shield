@@ -127,6 +127,23 @@ impl NamePattern {
     }
 }
 
+/// Words in the name of a module whose built-in guard names are trusted
+/// (`Admins.isAdmin`, `PermissionService:hasPermission`, `Ranks.isStaff`).
+const GUARD_MODULE_WORDS: &[&str] = &[
+    "admin",
+    "perm",
+    "staff",
+    "moder",
+    "rank",
+    "role",
+    "auth",
+    "access",
+    "whitelist",
+    "command",
+    "cmd",
+    "privilege",
+];
+
 /// Function names that are permission checks by default: `isAdmin`,
 /// `Permissions:hasPermission(player, ...)`, `is_owner`... Compared without
 /// case and underscores.
@@ -134,7 +151,6 @@ const DEFAULT_GUARDS: &[&str] = &[
     "isadmin",
     "issuperadmin",
     "isheadadmin",
-    "isowner",
     "isgameowner",
     "iscreator",
     "ismoderator",
@@ -255,15 +271,25 @@ pub fn parse_fail_on(text: &str) -> Result<Option<Severity>, String> {
 
 impl Config {
     /// Is the function at `path` (`Admins.isAdmin`) a permission check?
+    /// A built-in name called on a receiver only counts when the receiver is
+    /// named like a permission module (`Admins`, `PermissionService`,
+    /// `Ranks`...): `clan:isModerator(player)` or `plot:hasPermission(player,
+    /// "Build")` are about that clan or plot, not about who the player is.
     pub fn is_guard(&self, path: &[String]) -> bool {
         if self.guards.iter().any(|g| g.matches_name(path)) {
             return true;
         }
+        let Some((name, receiver)) = path.split_last() else {
+            return false;
+        };
+        let name = name.to_ascii_lowercase().replace('_', "");
         self.default_guards
-            && path.last().is_some_and(|name| {
-                let name = name.to_ascii_lowercase().replace('_', "");
-                DEFAULT_GUARDS.contains(&name.as_str())
-            })
+            && DEFAULT_GUARDS.contains(&name.as_str())
+            && (receiver.is_empty()
+                || receiver.iter().any(|segment| {
+                    let segment = segment.to_ascii_lowercase();
+                    GUARD_MODULE_WORDS.iter().any(|w| segment.contains(w))
+                }))
     }
 
     /// Finds `luau-shield.toml` in `start` (or its directory) or any ancestor.

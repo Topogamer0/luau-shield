@@ -16,12 +16,17 @@ pub struct State<'a> {
     /// expressions (`state[player] == "Playing"`, `busy[player]` is falsy),
     /// keyed by the expression text.
     pub expects: BTreeMap<Rc<str>, Expect>,
-    /// luau-shield007: a state expression tested on this path was then
-    /// changed so that the same test fails next time (`if state[player] ~=
+    /// luau-shield007: state expressions tested on this path and then changed
+    /// so that the same test fails next time (`if state[player] ~=
     /// "Playing" then return end; state[player] = "Menu"`): the request
-    /// cannot repeat the work that follows. `Some(true)` when the state is
-    /// per player, `Some(false)` for a global flag.
-    pub consumed: Option<bool>,
+    /// cannot repeat the work that follows. The value is `true` when the
+    /// state is per player, `false` for a global flag.
+    pub consumed: BTreeMap<Rc<str>, (bool, Expect)>,
+    /// Consumed states the handler yielded or waited with (other requests
+    /// could see them closed).
+    pub waited: std::collections::BTreeSet<Rc<str>>,
+    /// A permission guard on the sender succeeded on this path (its text).
+    pub admin: Option<Rc<str>>,
 }
 
 /// A literal a state expression is compared with.
@@ -99,9 +104,26 @@ impl<'a> State<'a> {
             .into_iter()
             .filter(|(k, e)| other.expects.get(k) == Some(e))
             .collect();
-        let consumed = match (self.consumed, other.consumed) {
-            (Some(a), Some(b)) => Some(a && b),
-            _ => None,
+        let consumed = self
+            .consumed
+            .into_iter()
+            .filter_map(|(k, (a, e))| {
+                other
+                    .consumed
+                    .get(&k)
+                    .filter(|(_, f)| *f == e)
+                    .map(|(b, _)| (k, (a && *b, e)))
+            })
+            .collect();
+        let waited = self
+            .waited
+            .into_iter()
+            .filter(|k| other.waited.contains(k))
+            .collect();
+        let admin = if self.admin == other.admin {
+            self.admin
+        } else {
+            None
         };
         State {
             vars,
@@ -109,6 +131,8 @@ impl<'a> State<'a> {
             dead: false,
             expects,
             consumed,
+            waited,
+            admin,
         }
     }
 
@@ -155,6 +179,8 @@ pub struct Facts {
     pub map: BTreeMap<Target, Checks>,
     /// luau-shield007: what holds about state expressions (see `State::expects`).
     pub expects: BTreeMap<Rc<str>, Expect>,
+    /// A permission guard on the sender succeeded (see `State::admin`).
+    pub guard: Option<Rc<str>>,
 }
 
 impl Facts {
@@ -178,6 +204,9 @@ impl Facts {
         for (text, expect) in &other.expects {
             self.expects.insert(text.clone(), expect.clone());
         }
+        if self.guard.is_none() {
+            self.guard = other.guard.clone();
+        }
         self
     }
 
@@ -194,7 +223,20 @@ impl Facts {
                 out.expects.insert(text.clone(), expect.clone());
             }
         }
+        if self.guard == other.guard {
+            out.guard = self.guard.clone();
+        }
         out
+    }
+
+    /// The same facts without what a permission guard proved.
+    pub fn without_guard(mut self) -> Facts {
+        self.guard = None;
+        for checks in self.map.values_mut() {
+            *checks &= !check::PRIVILEGED;
+        }
+        self.map.retain(|_, checks| *checks != 0);
+        self
     }
 
     pub fn expect(text: impl Into<Rc<str>>, expect: Expect) -> Facts {

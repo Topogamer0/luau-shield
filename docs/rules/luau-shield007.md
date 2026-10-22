@@ -335,8 +335,24 @@ functions it calls, silences the finding. Any of these is evidence:
    ```
 
    As with locks, a state keyed by the player limits that player; a state
-   shared by every player only counts when the handler also waits before
-   restoring it.
+   shared by every player only counts when the handler waits (or yields)
+   while it is closed. It does not count when:
+
+   - the handler changes it back before yielding (no other request ever
+     sees it closed);
+   - it is changed on both sides of the same test (a toggle: every request
+     flips it and does the work);
+   - the handler yields between the test and the change (every request fired
+     meanwhile passes the test);
+   - its key is chosen by the client and the work needs the entry to be
+     empty (`if redeemed[player][code] then return end` → every new `code`
+     is empty);
+   - only a local copy is changed (`local s = state[player]; s = "Menu"`).
+
+   The state can be read into a local first (`local current =
+   state[player]`), compared with named constants (`State.Playing`), or kept
+   in an attribute (`player:GetAttribute("State") ~= "Lobby"` then
+   `player:SetAttribute("State", "Queue")`).
 
 What is **not** enough:
 
@@ -407,9 +423,13 @@ The rule looks for evidence, it does not prove that the limit works:
   limit the cheaper remote too.
 - **Work under a condition is described, not excused.** When every expensive
   call of a handler runs inside an `if` (`if data[player] then
-  store:SetAsync(...) end`), the message says it runs "when a condition
-  holds" instead of "on every request". It is still reported: check that the
-  client cannot make the condition true on every request.
+  store:SetAsync(...) end`) and not on the other branch, the message says it
+  runs "when a condition holds" instead of "on every request". It is still
+  reported: check that the client cannot make the condition true on every
+  request.
+- **Admin-only handlers are `info`.** Expensive work that only runs after a
+  [permission check](../configuration.md#guards) on the sender is reported
+  as `info`, hidden by default.
 - **Handlers that can only run a few times are still reported.** A
   `:Once` handler, a handler that disconnects itself, or work bounded by
   game state (a tool that is cloned only after its price was paid, an

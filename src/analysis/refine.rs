@@ -5,7 +5,7 @@ use super::interp::{
     args_exprs, is_condition, is_falsy_literal, string_literal, symbol_of, unwrap_expr,
 };
 use super::state::{Expect, Facts, Frame, Lit, Refinement, State};
-use super::value::{Builtin, Checks, Func, Kind, SourceKind, Target, Value, check};
+use super::value::{Builtin, Checks, Func, Kind, ObjClass, SourceKind, Target, Value, check};
 use super::{Analyzer, token_name};
 use full_moon::ast::{BinOp, Call, Expression, FunctionCall, Index, Prefix, Suffix, UnOp, Var};
 use full_moon::tokenizer::{Symbol, TokenReference};
@@ -32,6 +32,17 @@ impl Cmp {
             BinOp::GreaterThanEqual(_) => Cmp::Ge,
             _ => return None,
         })
+    }
+
+    fn symbol(self) -> &'static str {
+        match self {
+            Cmp::Eq => "==",
+            Cmp::Ne => "~=",
+            Cmp::Lt => "<",
+            Cmp::Le => "<=",
+            Cmp::Gt => ">",
+            Cmp::Ge => ">=",
+        }
     }
 
     /// `a < b` is `b > a`.
@@ -81,6 +92,109 @@ fn is_verified(value: &Value<'_>) -> bool {
 /// A Lua pattern anchored at both ends (`^%w+$`).
 fn anchored(pattern: &str) -> bool {
     pattern.starts_with('^') && pattern.ends_with('$') && !pattern.ends_with("%$")
+}
+
+impl<'a> Analyzer<'a> {
+    /// luau-shield007: the texts a state expression is known by. The
+    /// expression itself, the state a local was read from (`local current
+    /// = state[player]`), or `recv@Attr` for `recv:GetAttribute("Attr")`.
+    fn state_texts(
+        &mut self,
+        frame: &mut Frame<'a>,
+        state: &mut State<'a>,
+        expr: &'a Expression,
+    ) -> Vec<String> {
+        let mut texts = Vec::new();
+        match unwrap_expr(expr) {
+            Expression::Var(var) => {
+                if let Some(key) = self.state_key(frame, var) {
+                    texts.push(key);
+                }
+                if let Var::Name(_) = var {
+                    let value = self.peek(frame, state, expr);
+                    if let Some(alias) = value.alias.as_deref() {
+                        if !texts.iter().any(|t| t == alias) {
+                            texts.push(alias.to_string());
+                        }
+                    }
+                }
+            }
+            Expression::FunctionCall(call) => {
+                if let Some(text) = state_call_text(call) {
+                    texts.push(text);
+                }
+            }
+            _ => {}
+        }
+        texts
+    }
+
+    /// luau-shield007: the key of a state expression, with variables named
+    /// by their declaration: `state[player]` in a helper whose parameter is
+    /// also called `player` is a different state.
+    pub(crate) fn state_key(&self, frame: &Frame<'a>, var: &Var) -> Option<String> {
+        let name_key = |name: &str| -> String {
+            match frame.lookup(name) {
+                Some(id) => format!("{name}#{id:x}"),
+                None => format!("{name}#g"),
+            }
+        };
+        match var {
+            Var::Name(token) => Some(name_key(&token_name(token))),
+            Var::Expression(var) => {
+                let mut key = match var.prefix() {
+                    Prefix::Name(token) => name_key(&token_name(token)),
+                    other => super::compact(other),
+                };
+                for suffix in var.suffixes() {
+                    match suffix {
+                        Suffix::Index(Index::Dot { name, .. }) => {
+                            key.push('.');
+                            key.push_str(&token_name(name));
+                        }
+                        Suffix::Index(Index::Brackets { expression, .. }) => {
+                            match unwrap_expr(expression) {
+                                Expression::Var(Var::Name(t)) => {
+                                    key.push('[');
+                                    key.push_str(&name_key(&token_name(t)));
+                                    key.push(']');
+                                }
+                                Expression::String(t) => {
+                                    key.push('.');
+                                    key.push_str(&string_literal(t).unwrap_or_default());
+                                }
+                                other => {
+                                    key.push('[');
+                                    key.push_str(&super::compact(other));
+                                    key.push(']');
+                                }
+                            }
+                        }
+                        _ => return None,
+                    }
+                }
+                Some(key)
+            }
+            _ => None,
+        }
+    }
+
+    /// A named constant (`State.Playing`, `PLAYING`) holding a literal.
+    fn constant_of(
+        &mut self,
+        frame: &mut Frame<'a>,
+        state: &mut State<'a>,
+        expr: &'a Expression,
+    ) -> Option<Lit> {
+        if !matches!(unwrap_expr(expr), Expression::Var(_)) {
+            return None;
+        }
+        let value = self.peek(frame, state, expr);
+        match &value.kind {
+            Kind::Str(Some(_)) | Kind::Number(Some(_)) => super::calls::literal_value(&value),
+            _ => None,
+        }
+    }
 }
 
 /// A literal compared with a state expression (`"Playing"`, `3`, `true`, `nil`).
@@ -263,6 +377,16 @@ impl<'a> Analyzer<'a> {
     pub(crate) fn apply_facts(&self, state: &mut State<'a>, facts: &Facts) {
         for (text, expect) in &facts.expects {
             state.expects.insert(text.clone(), expect.clone());
+        }
+        if let Some(guard) = &facts.guard {
+            state.admin = Some(guard.clone());
+            for (target, checks) in &facts.map {
+                if let (Target::Var(id), true) = (target, checks & check::PRIVILEGED != 0) {
+                    if let Some(value) = state.vars.get_mut(id) {
+                        value.privilege_deep(guard);
+                    }
+                }
+            }
         }
         for (target, checks) in &facts.map {
             state.add_checks(target, *checks);
@@ -661,14 +785,48 @@ impl<'a> Analyzer<'a> {
         if let Some(witness) = &value.witness {
             on_true.add(witness.clone(), check::ALLOWLIST);
         }
+        // `if ADMINS[player.UserId] then`: the sender is in a permission list.
+        if let Expression::Var(Var::Expression(var)) = unwrap_expr(expr) {
+            let suffixes: Vec<&'a Suffix> = var.suffixes().collect();
+            if let Some((Suffix::Index(Index::Brackets { expression, .. }), init)) =
+                suffixes.split_last()
+            {
+                let mut list = super::compact(var.prefix());
+                for s in init {
+                    list.push_str(&super::compact(*s));
+                }
+                let lower = list.to_ascii_lowercase();
+                let named = [
+                    "admin",
+                    "moder",
+                    "staff",
+                    "owner",
+                    "whitelist",
+                    "developer",
+                    "permission",
+                ]
+                .iter()
+                .any(|w| lower.contains(w));
+                let base = self.peek_suffixed(frame, state, var.prefix(), init);
+                if named
+                    && base.deep_flows().is_empty()
+                    && self.sender_arg(frame, state, expression) == Some(true)
+                {
+                    on_true =
+                        on_true.union(&self.privilege(state, super::compact(unwrap_expr(expr))));
+                }
+            }
+        }
         // luau-shield007 lock pattern: `if busy[player] then return end`,
         // `if debounce then return end`, `if not tool.Enabled then return end`.
         let mut on_false = Facts::default();
         if self.entry.is_some() {
-            let text = super::compact(unwrap_expr(expr));
-            on_true = on_true.union(&Facts::expect(text.as_str(), Expect::Truthy));
-            on_false = Facts::expect(text.as_str(), Expect::Falsy);
-            self.pending_lock_reads.push(text);
+            for text in self.state_texts(frame, state, expr) {
+                on_true = on_true.union(&Facts::expect(text.as_str(), Expect::Truthy));
+                on_false = on_false.union(&Facts::expect(text.as_str(), Expect::Falsy));
+            }
+            self.pending_lock_reads
+                .push(super::compact(unwrap_expr(expr)));
         }
         Refinement { on_true, on_false }
     }
@@ -682,6 +840,12 @@ impl<'a> Analyzer<'a> {
         rhs: &'a Expression,
     ) -> Refinement {
         let mut r = self.refine_compare_values(frame, state, lhs, cmp, rhs);
+        if let Some(admin) = self.inline_admin_compare(frame, state, lhs, cmp, rhs) {
+            r = Refinement {
+                on_true: r.on_true.union(&admin.on_true),
+                on_false: r.on_false.union(&admin.on_false),
+            };
+        }
         if !matches!(cmp, Cmp::Eq | Cmp::Ne) {
             return r;
         }
@@ -691,19 +855,28 @@ impl<'a> Analyzer<'a> {
             let (subject, literal) = match (literal_of(lhs), literal_of(rhs)) {
                 (None, Some(lit)) => (lhs, Some(lit)),
                 (Some(lit), None) => (rhs, Some(lit)),
-                _ => (lhs, None),
+                // Named constants: `State.Playing`, `local PLAYING = "Playing"`.
+                _ => match (
+                    self.constant_of(frame, state, lhs),
+                    self.constant_of(frame, state, rhs),
+                ) {
+                    (None, Some(lit)) => (lhs, Some(lit)),
+                    (Some(lit), None) => (rhs, Some(lit)),
+                    _ => (lhs, None),
+                },
             };
-            if let (Some(lit), Expression::Var(_)) = (literal, unwrap_expr(subject)) {
-                let text = super::compact(unwrap_expr(subject));
-                let equal = Facts::expect(text.as_str(), Expect::Eq(lit.clone()));
-                let different = Facts::expect(text.as_str(), Expect::Ne(lit));
-                let (yes, no) = if cmp == Cmp::Eq {
-                    (equal, different)
-                } else {
-                    (different, equal)
-                };
-                r.on_true = r.on_true.union(&yes);
-                r.on_false = r.on_false.union(&no);
+            if let Some(lit) = literal {
+                for text in self.state_texts(frame, state, subject) {
+                    let equal = Facts::expect(text.as_str(), Expect::Eq(lit.clone()));
+                    let different = Facts::expect(text.as_str(), Expect::Ne(lit.clone()));
+                    let (yes, no) = if cmp == Cmp::Eq {
+                        (equal, different)
+                    } else {
+                        (different, equal)
+                    };
+                    r.on_true = r.on_true.union(&yes);
+                    r.on_false = r.on_false.union(&no);
+                }
             }
         }
         let bool_literal = |e: &Expression| match unwrap_expr(e) {
@@ -724,10 +897,12 @@ impl<'a> Analyzer<'a> {
         let truthy = self.refine_condition(frame, state, other);
         // A call to a check returns a boolean: not `true` means `false`.
         let boolean = matches!(unwrap_expr(other), Expression::FunctionCall(_));
+        // `isAdmin(player) == false` is not `not isAdmin(player)` when the
+        // function returns nil for other players: no permission proven.
         let (holds, fails) = if literal {
             (truthy.on_true, truthy.on_false)
         } else {
-            (truthy.on_false, truthy.on_true)
+            (truthy.on_false, truthy.on_true.without_guard())
         };
         let fails = if boolean { fails } else { Facts::default() };
         let (on_true, on_false) = if cmp == Cmp::Eq {
@@ -752,7 +927,13 @@ impl<'a> Analyzer<'a> {
         // `x == nil` / `x ~= nil`
         if matches!(cmp, Cmp::Eq | Cmp::Ne) && (is_nil(lhs) || is_nil(rhs)) {
             let other = if is_nil(lhs) { rhs } else { lhs };
-            let truthy = self.refine_condition(frame, state, other);
+            let mut truthy = self.refine_condition(frame, state, other);
+            // `isAdmin(player) ~= nil` also holds when it returns false: not a
+            // permission check (also through a local holding the result).
+            truthy = Refinement {
+                on_true: truthy.on_true.without_guard(),
+                on_false: truthy.on_false.without_guard(),
+            };
             return if cmp == Cmp::Eq {
                 Refinement {
                     on_true: Facts::default(),
@@ -1022,7 +1203,10 @@ impl<'a> Analyzer<'a> {
         state: &mut State<'a>,
         call: &'a FunctionCall,
     ) -> Refinement {
-        let guard = self.guard_facts(frame, state, call);
+        let mut guard = self.guard_facts(frame, state, call);
+        if guard.guard.is_none() {
+            guard = self.admin_list_find(frame, state, call);
+        }
         let r = self.refine_call_checks(frame, state, call);
         let mut on_true = r.on_true.union(&guard);
         let mut on_false = r.on_false;
@@ -1045,7 +1229,7 @@ impl<'a> Analyzer<'a> {
         state: &mut State<'a>,
         call: &'a FunctionCall,
     ) -> Facts {
-        let mut facts = Facts::default();
+        let facts = Facts::default();
         let Some((prefix, init, last)) = split_call(call) else {
             return facts;
         };
@@ -1058,41 +1242,235 @@ impl<'a> Analyzer<'a> {
                 path.push(token_name(name));
             }
         }
-        let args = match last {
+        let (args, method) = match last {
             Call::MethodCall(method) => {
                 path.push(token_name(method.name()));
-                args_exprs(method.args())
+                (args_exprs(method.args()), true)
             }
-            Call::AnonymousCall(args) => args_exprs(args),
+            Call::AnonymousCall(args) => (args_exprs(args), false),
             _ => return facts,
         };
         if path.is_empty() || !self.config.is_guard(&path) {
             return facts;
         }
-        // The guard must test the sender (`player`, `player.UserId`), not a
-        // player or id chosen by the client. Other arguments must be
-        // constants (`hasPermission(player, "Ban")`): `isOwner(player, plot)`
-        // checks who owns a plot, not who the player is.
-        let values: Vec<Value<'a>> = args.iter().map(|e| self.peek(frame, state, e)).collect();
-        let on_sender = values.iter().any(|v| v.player_rel && !v.is_tainted());
-        let only_constants = values.iter().all(|v| {
-            !v.is_tainted()
-                && (v.player_rel
-                    || matches!(
-                        v.kind,
-                        Kind::Str(Some(_)) | Kind::Number(Some(_)) | Kind::Bool(Some(_))
-                    ))
-        });
-        if !on_sender || !only_constants {
+        // The module the guard is called on must not come from the client.
+        if method || !init.is_empty() {
+            let receiver = self.peek_suffixed(frame, state, prefix, &init);
+            if !receiver.deep_flows().is_empty() {
+                return facts;
+            }
+        }
+        // The guard must test the sender (`player`, `player.UserId`,
+        // `player.Name`), not a player, id or object chosen by the client or
+        // reached from the sender (`player.DisplayName`, `player.Plot.Value`).
+        // Other arguments must be constants (`hasPermission(player, "Ban")`).
+        let mut on_sender = false;
+        for e in &args {
+            match self.sender_arg(frame, state, e) {
+                Some(sender) => on_sender |= sender,
+                None => return facts,
+            }
+        }
+        if !on_sender {
             return facts;
         }
-        self.guard = Some(super::compact(call));
+        self.privilege(state, super::compact(call))
+    }
+
+    /// `table.find(ADMIN_IDS, player.UserId)`: the sender is in a server list
+    /// named like a permission list.
+    fn admin_list_find(
+        &mut self,
+        frame: &mut Frame<'a>,
+        state: &mut State<'a>,
+        call: &'a FunctionCall,
+    ) -> Facts {
+        let Some((Prefix::Name(t), init, Call::AnonymousCall(args))) = split_call(call) else {
+            return Facts::default();
+        };
+        let is_find = token_name(t) == "table"
+            && matches!(init.as_slice(), [Suffix::Index(Index::Dot { name, .. })] if token_name(name) == "find");
+        let args = args_exprs(args);
+        match (is_find, args.as_slice()) {
+            (true, [list, item]) if self.admin_list(frame, state, list) => {
+                if self.sender_arg(frame, state, item) == Some(true) {
+                    return self.privilege(state, super::compact(call));
+                }
+                Facts::default()
+            }
+            _ => Facts::default(),
+        }
+    }
+
+    /// A server table or list named like a permission list (`ADMINS`,
+    /// `Config.Moderators`, `whitelist`).
+    fn admin_list(
+        &mut self,
+        frame: &mut Frame<'a>,
+        state: &mut State<'a>,
+        expr: &'a Expression,
+    ) -> bool {
+        let text = super::compact(unwrap_expr(expr)).to_ascii_lowercase();
+        let named = [
+            "admin",
+            "moder",
+            "staff",
+            "owner",
+            "whitelist",
+            "developer",
+            "permission",
+        ]
+        .iter()
+        .any(|w| text.contains(w));
+        named && self.peek(frame, state, expr).deep_flows().is_empty()
+    }
+
+    /// `Some(true)` when `expr` is the sender (`player`, `player.UserId`,
+    /// `player.Name`), `Some(false)` for a constant, `None` otherwise.
+    fn sender_arg(
+        &mut self,
+        frame: &mut Frame<'a>,
+        state: &mut State<'a>,
+        expr: &'a Expression,
+    ) -> Option<bool> {
+        let value = self.peek(frame, state, expr);
+        if !value.deep_flows().is_empty() {
+            return None;
+        }
+        if value.class() == Some(&ObjClass::Player) {
+            return Some(true);
+        }
+        if matches!(
+            value.kind,
+            Kind::Str(Some(_)) | Kind::Number(Some(_)) | Kind::Bool(Some(_))
+        ) {
+            return Some(false);
+        }
+        self.sender_id(frame, state, expr).then_some(true)
+    }
+
+    /// `player.UserId` / `player.Name` of the sender.
+    fn sender_id(
+        &mut self,
+        frame: &mut Frame<'a>,
+        state: &mut State<'a>,
+        expr: &'a Expression,
+    ) -> bool {
+        let Expression::Var(Var::Expression(var)) = unwrap_expr(expr) else {
+            return false;
+        };
+        let suffixes: Vec<&'a Suffix> = var.suffixes().collect();
+        let [Suffix::Index(Index::Dot { name, .. })] = suffixes.as_slice() else {
+            return false;
+        };
+        if !matches!(token_name(name).as_str(), "UserId" | "Name") {
+            return false;
+        }
+        let base = self.peek_suffixed(frame, state, var.prefix(), &[]);
+        base.class() == Some(&ObjClass::Player) && base.deep_flows().is_empty()
+    }
+
+    /// Facts for the path where a permission check on the sender succeeded:
+    /// every untrusted variable is `PRIVILEGED` (findings on it become
+    /// `info`, "admin only").
+    pub(crate) fn privilege(&mut self, state: &State<'a>, text: String) -> Facts {
+        let mut facts = Facts::default();
         for (id, value) in &state.vars {
             if !value.deep_flows().is_empty() {
                 facts.add(Target::Var(*id), check::PRIVILEGED);
             }
         }
+        facts.guard = Some(Rc::from(text.as_str()));
+        self.guard = Some(text);
         facts
+    }
+
+    /// Permission checks written inline: `player.UserId == game.CreatorId`,
+    /// `player.UserId == 12345`, `player:GetRankInGroup(GROUP) >= 250`.
+    fn inline_admin_compare(
+        &mut self,
+        frame: &mut Frame<'a>,
+        state: &mut State<'a>,
+        lhs: &'a Expression,
+        cmp: Cmp,
+        rhs: &'a Expression,
+    ) -> Option<Refinement> {
+        let text = || {
+            format!(
+                "{} {} {}",
+                super::compact(lhs),
+                cmp.symbol(),
+                super::compact(rhs)
+            )
+        };
+        // `GetRankInGroup(G) >= N` (or `N <= GetRankInGroup(G)`).
+        let rank = |e: &'a Expression| -> Option<&'a FunctionCall> {
+            match unwrap_expr(e) {
+                Expression::FunctionCall(call) => match split_call(call) {
+                    Some((_, _, Call::MethodCall(m)))
+                        if token_name(m.name()) == "GetRankInGroup" =>
+                    {
+                        Some(call)
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+        let rank_side = match (rank(lhs), rank(rhs)) {
+            (Some(call), None) => Some((call, cmp)),
+            (None, Some(call)) => Some((call, cmp.flip())),
+            _ => None,
+        };
+        if let Some((call, cmp)) = rank_side {
+            let (prefix, init, _) = split_call(call)?;
+            let receiver = self.peek_suffixed(frame, state, prefix, &init);
+            if receiver.class() != Some(&ObjClass::Player) || !receiver.deep_flows().is_empty() {
+                return None;
+            }
+            let facts = self.privilege(state, text());
+            return match cmp {
+                Cmp::Ge | Cmp::Gt => Some(Refinement {
+                    on_true: facts,
+                    on_false: Facts::default(),
+                }),
+                Cmp::Lt | Cmp::Le => Some(Refinement {
+                    on_true: Facts::default(),
+                    on_false: facts,
+                }),
+                _ => None,
+            };
+        }
+        if !matches!(cmp, Cmp::Eq | Cmp::Ne) {
+            return None;
+        }
+        // `player.UserId == game.CreatorId` / `== 12345`.
+        let owner_id =
+            |this: &mut Self, frame: &mut Frame<'a>, state: &mut State<'a>, e: &'a Expression| {
+                if super::compact(unwrap_expr(e)) == "game.CreatorId" {
+                    return true;
+                }
+                let v = this.peek(frame, state, e);
+                matches!(v.kind, Kind::Number(Some(_))) && v.deep_flows().is_empty()
+            };
+        let matches_owner = (self.sender_id(frame, state, lhs)
+            && owner_id(self, frame, state, rhs))
+            || (self.sender_id(frame, state, rhs) && owner_id(self, frame, state, lhs));
+        if !matches_owner {
+            return None;
+        }
+        let facts = self.privilege(state, text());
+        Some(if cmp == Cmp::Eq {
+            Refinement {
+                on_true: facts,
+                on_false: Facts::default(),
+            }
+        } else {
+            Refinement {
+                on_true: Facts::default(),
+                on_false: facts,
+            }
+        })
     }
 
     fn refine_call_checks(
@@ -1184,7 +1562,9 @@ impl<'a> Analyzer<'a> {
                                 for func in field.funcs() {
                                     if let Func::Closure(closure) = func {
                                         handled = true;
-                                        if let Some(summary) = self.summary_of(&closure, state) {
+                                        if let Some(summary) =
+                                            self.summary_of(&closure, state, true)
+                                        {
                                             for (i, e) in args.iter().enumerate() {
                                                 if let (Some(t), Some(c)) = (
                                                     self.target_of(frame, e),
@@ -1276,7 +1656,7 @@ impl<'a> Analyzer<'a> {
                                 }
                                 Func::Closure(closure) => {
                                     let closure = closure.clone();
-                                    if let Some(summary) = self.summary_of(&closure, state) {
+                                    if let Some(summary) = self.summary_of(&closure, state, true) {
                                         let offset = usize::from(closure.is_method);
                                         for (i, e) in args.iter().enumerate() {
                                             if let (Some(t), Some(c)) = (
@@ -1330,7 +1710,12 @@ impl<'a> Analyzer<'a> {
             .reduce(|a, b| a | b);
         let checks = match configured {
             Some(c) => c,
-            None if self.config.trust_unresolved_validators && looks_like_validator(name) => {
+            // Inside a summary, an unresolved method is often only unresolved
+            // because `self` or a parameter is a placeholder: do not guess.
+            None if self.config.trust_unresolved_validators
+                && self.summary_nesting == 0
+                && looks_like_validator(name) =>
+            {
                 check::VALIDATED
             }
             None => return facts,

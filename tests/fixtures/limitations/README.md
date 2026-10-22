@@ -16,3 +16,4 @@ They document, with real code, the limits listed in the README.
 | `pattern-checked-inventory-key.server.luau` | false negative | an anchored pattern is accepted for keys, but it only checks the format, not that the item exists |
 | `check-in-earlier-loop.server.luau` | false positive | facts about the elements checked in one loop do not carry over to a second loop over the same table |
 | `upvalue-validator.server.luau` | false positive | a validator that checks captured variables instead of its parameters does not protect them |
+| `recursive-deep-copy.server.luau` | false positive | a recursive copy is cut off at the recursive call: the nested fields lose their checks |

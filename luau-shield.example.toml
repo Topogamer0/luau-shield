@@ -75,10 +75,11 @@ max-call-depth = 6
 # Permission checks. When code only runs after one of these succeeds for the
 # player who sent the request (`if not Admins.isAdmin(player) then return end`),
 # findings there are reported as "info" ("admin only"), which is below the
-# default min-severity. Built-in names: isAdmin, isOwner, isCreator,
-# isGameOwner, isModerator, isMod, isStaff, isDeveloper, isDev, isSuperAdmin,
-# isHeadAdmin, hasAdmin, hasAdminRights, hasAdminAccess, hasAdminPermission(s),
-# hasPermission(s) (case and underscores are ignored).
+# default min-severity. Built-in names: isAdmin, isCreator, isGameOwner,
+# isModerator, isMod, isStaff, isDeveloper, isDev, isSuperAdmin, isHeadAdmin,
+# hasAdmin, hasAdminRights, hasAdminAccess, hasAdminPermission(s),
+# hasPermission(s) (case and underscores are ignored), called directly or on a
+# module named like a permission module (Admins, PermissionService, Ranks...).
 [guards]
 # functions = ["Admins.isAdmin", "PermissionService:Check"]   # a single name matches any receiver
 defaults = true                  # false: only trust the functions listed above

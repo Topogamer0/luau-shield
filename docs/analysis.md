@@ -63,11 +63,13 @@ A value derived from untrusted data is untrusted. Taint flows through:
   `and`/`or`, type assertions (`x :: number`), parentheses;
 - table constructors and fields: `{ amount = x }`, `data.amount`, `data[k]`,
   nested tables, `table.insert`, `{...}`, `select`, `table.unpack`. Fields
-  are tracked one by one, also through loops: `for key, value in patch do
-  copy[key] = value end` over a table built by the server with known keys
-  (`{ coins = amount }`) runs once per field, so `copy.level` stays empty
-  instead of inheriting `amount`. A table sent by the client has unknown
-  keys: every field of the copy is client-controlled;
+  are tracked one by one, also through copies: a loop that copies by key,
+  `for key, value in patch do copy[key] = value end`, over a table built by
+  the server with known keys (`{ coins = amount }`, at most 16 keys) runs
+  once per field, so `copy.level` stays empty instead of inheriting
+  `amount`. Other loops (and loops that create functions, such as handlers
+  connected in a loop) are analysed as a whole. A table sent by the client
+  has unknown keys: every field of the copy is client-controlled;
 - string library functions (`string.format`, `s:sub()`, `s:lower()`, ...),
   `tostring`, `tonumber`, `math.*`, `HttpService:JSONEncode/JSONDecode`;
 - calls to **local functions of the same file** (the callee is analysed with
@@ -89,13 +91,17 @@ A value derived from untrusted data is untrusted. Taint flows through:
 - calls to unknown functions: the result is conservatively considered tainted
   if any argument is tainted.
 
-Calls deeper than `max-call-depth` (or beyond the time budget of a handler)
-are not followed one by one. For those, luau-shield analyses the function
-once on its own, with placeholder arguments, and records what it returns in
-terms of its parameters, including the checks it made: a sanitizer reached
-through many layers (`Look.fromV1(raw)` → ... → `Look.sanitize(raw)` →
-`clampIndex(v, 10, 1)`) still protects its result. Sinks inside such deep
-functions are not reported.
+Calls deeper than `max-call-depth` are not followed one by one. For those,
+luau-shield analyses the function once on its own, with placeholder
+arguments (`self` included), and records what it returns in terms of its
+parameters, including the checks it made: a sanitizer reached through many
+layers (`Look.fromV1(raw)` → ... → `Look.sanitize(raw)` →
+`clampIndex(v, 10, 1)`) still protects its result. A function that returns
+one of its parameters is assumed to have stored the other arguments in it
+(`TableUtil.assign(target, source)`), and bounds that come from another
+argument only count when that argument is server data. Sinks inside such deep
+functions are not reported, and a summary that runs out of its own budget is
+not used.
 
 Reading a value out of a **server-owned** table with an untrusted key does
 *not* produce untrusted data: `PRICES[itemId]` is a server value (it may be

@@ -260,6 +260,11 @@ number read from a verified Instance is server data, but a number sent by the
 client next to it still needs the [luau-shield001](luau-shield001.md) checks (including NaN
 rejection) before it goes into `leaderstats`.
 
+**Admin-only code.** Admin tools act on Instances the admin picked (kick a
+player, delete a build). After a [permission check](../configuration.md#guards)
+on the sender, these findings are reported as `info`, hidden by default. The
+same handler's unguarded path is still reported.
+
 ## Limitations
 
 - **The quality of the anchor is not judged.** `part:IsDescendantOf(workspace)`

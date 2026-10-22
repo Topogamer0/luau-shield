@@ -20,6 +20,9 @@ use value::{Closure, Flow, Func, Kind, ObjClass, Source, SourceKind, Value, VarI
 
 /// Statements interpreted per entry point before giving up on deeper calls.
 const ENTRY_BUDGET: usize = 60_000;
+/// Statements all return summaries of a run may use together: past it,
+/// calls too deep to follow fall back to the conservative result.
+pub(crate) const SUMMARY_TOTAL_BUDGET: usize = 200_000;
 
 #[derive(Default)]
 pub struct AnalysisOutput {
@@ -111,18 +114,23 @@ pub(crate) struct Pending<'a> {
     registration: Loc,
     state: Option<State<'a>>,
     rate_limited: bool,
+    /// `player.Chatted` connected only after a permission check on that
+    /// player: the messages come from an admin.
+    admin: Option<Rc<str>>,
 }
 
 /// Expensive work done by a remote handler (luau-shield007).
 pub(crate) struct Expensive {
     what: String,
-    /// The work only runs after the handler changed a state it tested (see
-    /// `State::consumed`): `Some(true)` per player, `Some(false)` global.
-    consumed: Option<bool>,
+    /// States the handler changed after testing them, before this work (see
+    /// `State::consumed`): text and per-player flag.
+    consumed: Vec<(Rc<str>, bool)>,
     /// Inside an `if` branch.
     conditional: bool,
-    /// The function doing it, when it is not the handler itself.
+    /// The function holding that condition, when it is not the handler.
     function: Option<Rc<str>>,
+    /// Only reached after a permission guard on the sender.
+    admin: Option<Rc<str>>,
 }
 
 /// Per-handler bookkeeping for luau-shield007.
@@ -136,6 +144,18 @@ pub(crate) struct EntryCtx {
     per_player_writes: HashSet<String>,
     /// The handler waits (`task.wait`, `task.delay`) before releasing locks.
     waits: bool,
+    /// Global states consumed when the handler waited (they stay closed for
+    /// a while).
+    waited_while: HashSet<Rc<str>>,
+    /// States changed on both sides of the same test (a toggle): they do not
+    /// stop the next request.
+    toggles: HashSet<Rc<str>>,
+    /// Consumed states put back before the handler yielded: no other request
+    /// ever saw them closed.
+    released_early: HashSet<Rc<str>>,
+    /// Index into `expensive` of work that also runs on the other branches
+    /// of its `if` (not conditional after all).
+    unconditional: HashSet<usize>,
 }
 
 enum ModuleState<'a> {
@@ -170,6 +190,8 @@ pub struct Analyzer<'a> {
     return_summaries: HashMap<(usize, usize), Option<Rc<ReturnSummary<'a>>>>,
     /// Nesting of return summary computations.
     summary_nesting: u32,
+    /// Statements spent on return summaries so far.
+    summary_spent: usize,
     next_source: u32,
     next_frame: u32,
     stack: Vec<(usize, usize)>,
@@ -186,6 +208,8 @@ pub struct Analyzer<'a> {
     pending_lock_reads: Vec<String>,
     /// Nesting of `if` branches being executed (luau-shield007 messages).
     branch_depth: u32,
+    /// Function (and call depth) of each `if` branch being executed.
+    branch_owners: Vec<(Rc<str>, usize)>,
     /// Nesting of loops run once per field (see `exec_unrolled`).
     unroll_depth: u32,
     /// The last permission guard (`Admins.isAdmin(player)`) seen in the
@@ -228,6 +252,7 @@ impl<'a> Analyzer<'a> {
             summaries: HashMap::new(),
             return_summaries: HashMap::new(),
             summary_nesting: 0,
+            summary_spent: 0,
             next_source: 1,
             next_frame: 1,
             stack: Vec::new(),
@@ -238,6 +263,7 @@ impl<'a> Analyzer<'a> {
             condition_depth: 0,
             pending_lock_reads: Vec::new(),
             branch_depth: 0,
+            branch_owners: Vec::new(),
             unroll_depth: 0,
             guard: None,
             budget: ENTRY_BUDGET,
@@ -404,12 +430,17 @@ impl<'a> Analyzer<'a> {
         if self.peek > 0 || self.quiet > 0 || self.module_eval > 0 || funcs.is_empty() {
             return;
         }
+        let admin = match kind {
+            EntryKind::Chat => state.admin.clone(),
+            _ => None,
+        };
         self.pending.push(Pending {
             funcs,
             kind,
             registration,
             state: if top_level { None } else { Some(state.clone()) },
             rate_limited,
+            admin,
         });
     }
 
@@ -451,9 +482,22 @@ impl<'a> Analyzer<'a> {
             self.budget = ENTRY_BUDGET;
             self.guard = None;
             self.branch_depth = 0;
+            self.branch_owners.clear();
             self.unroll_depth = 0;
             let mut state = base.clone();
-            let (args, rest) = args;
+            // A handler connected inside another one starts afresh: the
+            // outer request's state checks and permissions do not apply.
+            state.expects.clear();
+            state.consumed.clear();
+            state.waited.clear();
+            state.admin = None;
+            let (mut args, mut rest) = args;
+            if let Some(guard) = &pending.admin {
+                for arg in args.iter_mut().chain(rest.iter_mut()) {
+                    arg.privilege_deep(guard);
+                }
+                state.admin = Some(guard.clone());
+            }
             self.call_closure(
                 &mut state,
                 closure.clone(),
@@ -474,13 +518,16 @@ impl<'a> Analyzer<'a> {
                 // ~= "Playing" then return end; state[player] = "Menu"`)
                 // cannot repeat; a global state only limits when the handler
                 // also waits before restoring it.
-                let unprotected: Vec<&Expensive> = ctx
+                let unprotected: Vec<(usize, &Expensive)> = ctx
                     .expensive
                     .iter()
-                    .filter(|e| match e.consumed {
-                        Some(true) => false,
-                        Some(false) => !ctx.waits,
-                        None => true,
+                    .enumerate()
+                    .filter(|(_, e)| {
+                        !e.consumed.iter().any(|(text, per_player)| {
+                            !ctx.toggles.contains(text)
+                                && !ctx.released_early.contains(text)
+                                && (*per_player || ctx.waited_while.contains(text))
+                        })
                     })
                     .collect();
                 if !unprotected.is_empty() && !ctx.rate_limited && !locked {
@@ -488,7 +535,7 @@ impl<'a> Analyzer<'a> {
                         unreachable!()
                     };
                     let mut ops: Vec<&str> = Vec::new();
-                    for op in &unprotected {
+                    for (_, op) in &unprotected {
                         if !ops.contains(&op.what.as_str()) {
                             ops.push(&op.what);
                         }
@@ -499,8 +546,11 @@ impl<'a> Analyzer<'a> {
                     } else {
                         String::new()
                     };
-                    let message = if unprotected.iter().all(|e| e.conditional) {
-                        let place = match unprotected.iter().find_map(|e| e.function.clone()) {
+                    let conditional = unprotected
+                        .iter()
+                        .all(|(i, e)| e.conditional && !ctx.unconditional.contains(i));
+                    let message = if conditional {
+                        let place = match unprotected.iter().find_map(|(_, e)| e.function.clone()) {
                             Some(f) => format!(" in `{f}`"),
                             None => String::new(),
                         };
@@ -512,7 +562,25 @@ impl<'a> Analyzer<'a> {
                             "the `{remote}.{event}` handler calls {shown}{more} on every request, with no rate limit"
                         )
                     };
-                    self.report(RuleId::Ls007, pending.registration, message, None, None);
+                    // Admin-only handlers: admins are trusted not to flood.
+                    match unprotected
+                        .iter()
+                        .map(|(_, e)| e.admin.clone())
+                        .collect::<Option<Vec<_>>>()
+                    {
+                        Some(guards) if !guards.is_empty() => {
+                            let guard = guards[0].to_string();
+                            self.report_downgraded(
+                                RuleId::Ls007,
+                                pending.registration,
+                                message,
+                                None,
+                                None,
+                                guard,
+                            );
+                        }
+                        _ => self.report(RuleId::Ls007, pending.registration, message, None, None),
+                    }
                 }
             }
         }
@@ -700,7 +768,9 @@ impl<'a> Analyzer<'a> {
                 return;
             }
         }
-        if rule == RuleId::Ls003 {
+        // One luau-shield003 finding per client Instance; an admin-only one
+        // does not hide a later exploitable one.
+        if rule == RuleId::Ls003 && guarded_by.is_none() {
             if let Some(flow) = flow {
                 if !self.ls003_sources.insert(flow.source.id) {
                     return;

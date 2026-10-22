@@ -266,23 +266,46 @@ local function onCommand(sender, text)
 end
 ```
 
-A call is a permission check when:
+A permission check is one of:
 
-- its name (the last segment: `Admins.isAdmin`, `self:isAdmin`, `is_admin`)
-  is one of the built-in names, ignoring case and underscores: `isAdmin`,
-  `isSuperAdmin`, `isHeadAdmin`, `isOwner`, `isGameOwner`, `isCreator`,
-  `isModerator`, `isMod`, `isStaff`, `isDeveloper`, `isDev`, `hasAdmin`,
-  `hasAdminRights`, `hasAdminAccess`, `hasAdminPermission(s)`,
-  `hasPermission(s)`; or it matches a pattern in `[guards] functions`;
-- one argument is the sender (`player`, `player.UserId`, `player.Name`) and
-  every other argument is a constant (`hasPermission(player, "Ban")`). A check
-  on a player or id chosen by the client (`isAdmin(target)`), or on another
-  object (`isOwner(player, plot)` checks who owns a plot, not who the player
-  is), is not a permission check.
+- **A call to a guard function** on the sender:
+  - the function's name (the last segment: `Admins.isAdmin`, `is_admin`) is
+    a built-in name, ignoring case and underscores: `isAdmin`,
+    `isSuperAdmin`, `isHeadAdmin`, `isGameOwner`, `isCreator`,
+    `isModerator`, `isMod`, `isStaff`, `isDeveloper`, `isDev`, `hasAdmin`,
+    `hasAdminRights`, `hasAdminAccess`, `hasAdminPermission(s)`,
+    `hasPermission(s)`. When it is called on a module, the module's name
+    must say so (it contains `admin`, `perm`, `staff`, `moder`, `rank`,
+    `role`, `auth`, `access`, `whitelist`, `command`, `cmd` or
+    `privilege`): `clan:isModerator(player)` or `plot:hasPermission(player,
+    "Build")` are about a clan or a plot, not about who the player is.
+    `isOwner` is not built in (tycoons, plots and pets have owners); add it
+    to `functions` if it means the game owner in your code;
+  - or it matches a pattern in `[guards] functions` (any module name);
+  - one argument is the sender (`player`, `player.UserId` or `player.Name`;
+    not `player.DisplayName`, which players choose) and every other
+    argument is a constant (`hasPermission(player, "Ban")`). A check on a
+    player chosen by the client (`isAdmin(target)`) or on another object
+    (`isOwner(player, plot)`) is not a permission check;
+  - the call itself is the condition (`if not Admins.isAdmin(player)`,
+    `assert(...)`, `local ok = Admins.isAdmin(player)`), or is compared with
+    `true`. `isAdmin(player) ~= nil` and `isAdmin(player) == false` do not
+    count: they also hold when the function returns `false` or `nil` for
+    other players.
+- **An inline check** on the sender: `player.UserId == game.CreatorId`,
+  `player.UserId == 12345`, `player:GetRankInGroup(GROUP) >= 250`,
+  `ADMINS[player.UserId]` or `table.find(ADMIN_IDS, player.UserId)` with a
+  server table whose name contains `admin`, `moder`, `staff`, `owner`,
+  `whitelist`, `developer` or `permission`.
 
-Code execution (luau-shield004) is never downgraded: running code chosen by a
-chat message stays critical even for admins, because a stolen admin account
-or a wrong asset id runs arbitrary code on the server.
+Findings of luau-shield001, 002, 003, 005 and 007 behind such a check are
+downgraded, including a `player.Chatted` listener that is only connected
+after the check. Two kinds are never downgraded:
+
+- code execution (luau-shield004): a stolen admin account or a wrong asset
+  id would run arbitrary code on the server;
+- unfiltered text shown to other players (luau-shield002 on `Text`): Roblox
+  requires filtering whoever typed it.
 
 ```toml
 [guards]

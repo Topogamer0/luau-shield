@@ -243,6 +243,52 @@ const MAX_UNROLLED_FIELDS: usize = 16;
 /// as fields^depth); they use the merged element instead.
 const MAX_UNROLL_NESTING: u32 = 2;
 
+/// Does the loop body copy entries by key (`copy[key] = value`,
+/// `totals[key] += value`), without creating functions? Only such loops are
+/// run once per field: closures created in the body capture the loop
+/// variables, which a per-field run would leave bound to the last field.
+fn copies_by_key(block: &Block, key: &str) -> bool {
+    struct Scan<'k> {
+        key: &'k str,
+        copies: bool,
+        functions: bool,
+    }
+    impl Scan<'_> {
+        fn target(&mut self, var: &Var) {
+            if let Var::Expression(var) = var {
+                if let Some(Suffix::Index(Index::Brackets { expression, .. })) =
+                    var.suffixes().last()
+                {
+                    if matches!(unwrap_expr(expression), Expression::Var(Var::Name(t)) if token_name(t) == self.key)
+                    {
+                        self.copies = true;
+                    }
+                }
+            }
+        }
+    }
+    impl full_moon::visitors::Visitor for Scan<'_> {
+        fn visit_function_body(&mut self, _: &full_moon::ast::FunctionBody) {
+            self.functions = true;
+        }
+        fn visit_assignment(&mut self, assignment: &full_moon::ast::Assignment) {
+            for var in assignment.variables() {
+                self.target(var);
+            }
+        }
+        fn visit_compound_assignment(&mut self, assignment: &full_moon::ast::CompoundAssignment) {
+            self.target(assignment.lhs());
+        }
+    }
+    let mut scan = Scan {
+        key,
+        copies: false,
+        functions: false,
+    };
+    full_moon::visitors::Visit::visit(block, &mut scan);
+    scan.copies && !scan.functions
+}
+
 /// The fields of the iterated collection, when every key is known: a server
 /// table with named fields only (not an array, not filled with dynamic keys,
 /// not sent by the client). `ipairs` only visits array entries: not unrolled.
@@ -347,10 +393,12 @@ impl<'a> Analyzer<'a> {
             if state.dead {
                 break;
             }
-            if self.budget == 0 {
+            // Out of budget, nested calls stop, but the handler's own body
+            // (and module code) still runs: its sinks are cheap to check.
+            if self.budget == 0 && (self.stack.len() > 1 || self.summary_nesting > 0) {
                 break;
             }
-            self.budget -= 1;
+            self.budget = self.budget.saturating_sub(1);
             state = self.exec_stmt(frame, stmt, state);
         }
         if !state.dead {
@@ -417,6 +465,11 @@ impl<'a> Analyzer<'a> {
                 if let (Some(first), Some(expr)) = (values.first_mut(), exprs.first()) {
                     if is_condition(expr) || is_measure(expr) {
                         first.defined_by = Some(expr);
+                    }
+                    // `local current = state[player]`: testing `current` tests
+                    // that state (luau-shield007).
+                    if let Expression::Var(var @ Var::Expression(_)) = unwrap_expr(expr) {
+                        first.alias = self.state_key(frame, var).map(|k| Rc::from(k.as_str()));
                     }
                 }
                 for (i, name) in local.names().iter().enumerate() {
@@ -587,9 +640,16 @@ impl<'a> Analyzer<'a> {
                     frame.scopes.push(BTreeMap::new());
                     self.declare_local(frame, &mut then_state, binding.name(), cond_value.clone());
                 }
-                self.branch_depth += 1;
+                // luau-shield007 bookkeeping: which branches do expensive work,
+                // which states each branch changes.
+                let consumed_before: Vec<Rc<str>> =
+                    condition_state.consumed.keys().cloned().collect();
+                let work_start = self.expensive_count();
+                let mut branch_work = Vec::new();
+                self.enter_branch(frame);
                 let then_end = self.exec_block(frame, stmt.block(), then_state);
-                self.branch_depth -= 1;
+                self.leave_branch();
+                branch_work.push(self.expensive_count() > work_start);
                 if stmt.binding().is_some() {
                     frame.scopes.pop();
                 }
@@ -619,22 +679,55 @@ impl<'a> Analyzer<'a> {
                         let r = self.refine_condition(frame, &mut else_state, else_if.condition());
                         let mut branch = else_state.clone();
                         self.apply_facts(&mut branch, &r.on_true);
-                        self.branch_depth += 1;
+                        let before = self.expensive_count();
+                        self.enter_branch(frame);
                         ends.push(self.exec_block(frame, else_if.block(), branch));
-                        self.branch_depth -= 1;
+                        self.leave_branch();
+                        branch_work.push(self.expensive_count() > before);
                         self.apply_facts(&mut else_state, &r.on_false);
                     }
                 }
                 let else_end = match stmt.else_block() {
                     Some(block) if !else_state.dead => {
-                        self.branch_depth += 1;
+                        let before = self.expensive_count();
+                        self.enter_branch(frame);
                         let end = self.exec_block(frame, block, else_state);
-                        self.branch_depth -= 1;
+                        self.leave_branch();
+                        branch_work.push(self.expensive_count() > before);
                         end
                     }
-                    _ => else_state,
+                    _ => {
+                        // Without `else`, the other path does nothing.
+                        if !else_state.dead {
+                            branch_work.push(false);
+                        }
+                        else_state
+                    }
                 };
                 ends.push(else_end);
+                if let Some(entry) = self.entry.as_mut() {
+                    // Work done whichever branch runs is not conditional.
+                    if branch_work.iter().all(|w| *w) {
+                        entry
+                            .unconditional
+                            .extend(work_start..entry.expensive.len());
+                    }
+                    // A state changed on two sides of the same test is a
+                    // toggle: each request flips it and does the work.
+                    let mut changed: BTreeMap<Rc<str>, usize> = BTreeMap::new();
+                    for end in ends.iter().filter(|e| !e.dead) {
+                        for text in end.consumed.keys() {
+                            if !consumed_before.contains(text) {
+                                *changed.entry(text.clone()).or_insert(0) += 1;
+                            }
+                        }
+                    }
+                    for (text, count) in changed {
+                        if count >= 2 {
+                            entry.toggles.insert(text);
+                        }
+                    }
+                }
                 state = State::join_all(ends);
             }
             Stmt::While(stmt) => {
@@ -694,8 +787,11 @@ impl<'a> Analyzer<'a> {
                 let exprs: Vec<&'a Expression> = stmt.expressions().iter().collect();
                 let collection = self.iteration_collection(frame, &mut state, &exprs);
                 let names: Vec<&'a TokenReference> = stmt.names().iter().collect();
+                let copies = names
+                    .first()
+                    .is_some_and(|key| copies_by_key(stmt.block(), &token_name(key)));
                 let fields = known_fields(&collection, &exprs)
-                    .filter(|_| self.unroll_depth < MAX_UNROLL_NESTING);
+                    .filter(|_| copies && self.unroll_depth < MAX_UNROLL_NESTING);
                 if let Some(fields) = fields {
                     self.unroll_depth += 1;
                     state = self.exec_unrolled(frame, state, stmt.block(), &names, fields);
@@ -812,6 +908,9 @@ impl<'a> Analyzer<'a> {
             if current.dead {
                 break;
             }
+            // A field whose value is nil at run time is not visited: every
+            // iteration may be skipped.
+            let skipped = current.clone();
             let key = match key.parse::<f64>() {
                 Ok(n) => Value::of(Kind::Number(Some(n))),
                 Err(_) => Value::of(Kind::Str(Some(key))),
@@ -829,7 +928,7 @@ impl<'a> Analyzer<'a> {
             frame.scopes.pop();
             let ctx = frame.loops.last_mut().expect("loop context");
             let continues = std::mem::take(&mut ctx.continues);
-            current = State::join_all(std::iter::once(body_end).chain(continues));
+            current = State::join_all([skipped, body_end].into_iter().chain(continues));
         }
         let ctx = frame.loops.pop().expect("loop context");
         State::join_all(std::iter::once(current).chain(ctx.breaks))
@@ -969,8 +1068,16 @@ impl<'a> Analyzer<'a> {
         match var {
             Var::Name(token) => {
                 let name = token_name(token);
-                // luau-shield007 lock pattern: `debounce = true`.
-                self.consume_expect(state, &name, &value, false);
+                // luau-shield007 lock pattern: `debounce = true`. A local of
+                // this function is only a copy of the state: changing it
+                // changes nothing for the next request.
+                let local = frame
+                    .scopes
+                    .iter()
+                    .any(|scope| scope.contains_key(name.as_str()));
+                if let (false, Some(key)) = (local, self.state_key(frame, var)) {
+                    self.consume_expect(state, &key, &value, false, false);
+                }
                 self.note_lock_write(&name, &value, false);
                 let value = value.step(loc, &format!("assigned to `{name}`"));
                 self.write_name(frame, state, &name, value);
@@ -1050,13 +1157,17 @@ impl<'a> Analyzer<'a> {
                 let per_player = matches!(&key, Key::Dynamic(k, _) if k.player_rel);
                 // State machines: `state[player] = "Menu"`, `data[player].Slots[slot] = nil`.
                 let mut player_state = per_player;
+                let mut client_key = matches!(&key, Key::Dynamic(k, _) if k.is_tainted());
                 for suffix in init {
                     if let Suffix::Index(Index::Brackets { expression, .. }) = suffix {
                         let k = self.peek(frame, state, expression);
                         player_state |= k.player_rel && !k.is_tainted();
+                        client_key |= !k.deep_flows().is_empty();
                     }
                 }
-                self.consume_expect(state, &target_display, &value, player_state);
+                if let Some(state_key) = self.state_key(frame, var) {
+                    self.consume_expect(state, &state_key, &value, player_state, client_key);
+                }
                 self.note_lock_write(&target_display, &value, per_player);
                 // Store into a table we track.
                 if let Some((root, keys)) = self.static_path(frame, var_expr.prefix(), init) {
@@ -1222,6 +1333,12 @@ impl<'a> Analyzer<'a> {
                         values.push(rest.clone());
                     }
                 }
+                // `...` is not a variable: apply a permission guard here.
+                if let Some(guard) = &state.admin {
+                    for value in &mut values {
+                        value.privilege_deep(guard);
+                    }
+                }
                 values
             }
             Expression::Var(Var::Expression(var_expr)) => {
@@ -1249,11 +1366,15 @@ impl<'a> Analyzer<'a> {
                 Some(Symbol::Nil) => Value::nil(),
                 Some(Symbol::Ellipsis) => {
                     let mut values = frame.varargs.iter();
-                    match (values.next(), &frame.vararg_rest) {
+                    let mut value = match (values.next(), &frame.vararg_rest) {
                         (Some(first), _) => first.clone(),
                         (None, Some(rest)) => rest.clone(),
                         (None, None) => Value::nil(),
+                    };
+                    if let Some(guard) = &state.admin {
+                        value.privilege_deep(guard);
                     }
+                    value
                 }
                 _ => Value::unknown(),
             },
@@ -1693,7 +1814,22 @@ impl<'a> Analyzer<'a> {
                         _ => None,
                     };
                     let key_display = compact(*suffix);
+                    // `data[name]` with `name == "Gems"`: the path names the
+                    // field, so that currencies and saved data are recognised.
+                    let constant_from_variable = match (index, &key) {
+                        (Index::Brackets { expression, .. }, Key::Name(n))
+                            if !matches!(unwrap_expr(expression), Expression::String(_)) =>
+                        {
+                            Some(n.clone())
+                        }
+                        _ => None,
+                    };
+                    let base_path = current.path.clone();
                     current = self.index_value(&current, key, loc, &display, &key_display);
+                    if let Some(n) = constant_from_variable {
+                        let base = base_path.as_deref().unwrap_or(display.as_str());
+                        current.path = Some(Rc::from(format!("{base}.{n}").as_str()));
+                    }
                     display.push_str(&key_display);
                     if let Some((id, path)) = &static_path {
                         if let Some(checks) = state.path_facts.get(&(*id, Rc::from(path.as_str())))

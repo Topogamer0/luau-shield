@@ -69,8 +69,8 @@ visible, even when the job is red.
 | `build-from-source` | `"false"` | `"true"` compiles luau-shield from the action's source with `cargo build --release --locked`. The runner needs a Rust toolchain (GitHub-hosted runners have one; `dtolnay/rust-toolchain` installs a specific one). |
 | `config` | `""` | Configuration file (`--config`). Empty: `luau-shield.toml` is looked up in the checked directory and its parents. See [Configuration](configuration.md). |
 | `project` | `""` | Rojo project file (`--project`). Empty: the `project` key of the configuration, or `default.project.json`. |
-| `min-severity` | `low` | Lowest severity that is reported: `low`, `medium`, `high`, `critical`. |
-| `fail-on` | `high` | Fail the job when a reported finding has at least this severity: `low`, `medium`, `high`, `critical`, `never`. |
+| `min-severity` | `low` | Lowest severity that is reported: `info`, `low`, `medium`, `high`, `critical`. |
+| `fail-on` | `high` | Fail the job when a reported finding has at least this severity: `info`, `low`, `medium`, `high`, `critical`, `never`. |
 | `args` | `""` | Extra arguments for both runs, separated by whitespace, for example `--disable luau-shield007`. Do not pass `--format`, `--output` or `--fail-on`. |
 | `sarif-file` | `luau-shield.sarif` | Where the SARIF report is written, relative to the workspace. |
 | `upload-sarif` | `"true"` | Upload the report to code scanning. |
@@ -114,6 +114,12 @@ Open **Security > Code scanning** in the repository. Every finding is an
 alert with its rule (`luau-shield001` ... `luau-shield008`), its severity, the file and line,
 and the rule's explanation. Filter with `tool:luau-shield` to see only
 luau-shield alerts.
+
+Findings downgraded to `info` (admin-only code, see
+[Guards](configuration.md#guards)) are only uploaded with
+`min-severity: info`. They are written with SARIF level `note`, but GitHub
+shows a rule's security severity on every alert of that rule, so they appear
+with the severity of their rule (for example *High* for luau-shield001).
 
 Alerts follow the code: an alert is closed automatically when a later scan
 of the same branch no longer reports it. You can also dismiss an alert in the
@@ -250,6 +256,7 @@ any reported finding.
 | `luau-shield check src -s medium` | medium and above | any reported finding |
 | `luau-shield check src -s high --fail-on critical` | high and critical | a critical finding |
 | `luau-shield check src --fail-on never` | everything | never |
+| `luau-shield check src -s info` | everything, including admin-only `info` findings | any finding except `info` |
 | `luau-shield check src --only luau-shield004,luau-shield008` | code execution and secrets only | any of them |
 
 Flags override [`luau-shield.toml`](configuration.md).

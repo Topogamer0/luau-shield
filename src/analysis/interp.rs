@@ -87,6 +87,7 @@ fn library_member(library: &str, member: &str) -> Builtin {
         ("string", "find") => StringFind,
         ("string", "format") => StringFormat,
         ("string", "byte") => StringByte,
+        ("string", "sub") => StringSub,
         ("string", _) => StringOther,
         ("table", "insert") => TableInsert,
         ("table", "find") => TableFind,
@@ -258,6 +259,28 @@ pub(crate) fn is_condition(expr: &Expression) -> bool {
     }
 }
 
+/// An expression measuring a value (`#x`, `(a - b).Magnitude`,
+/// `player:DistanceFromCharacter(p)`, `math.abs(x)`, `string.len(s)`).
+pub(crate) fn is_measure(expr: &Expression) -> bool {
+    match unwrap_expr(expr) {
+        Expression::UnaryOperator {
+            unop: UnOp::Hash(_),
+            ..
+        } => true,
+        Expression::Var(Var::Expression(var)) => matches!(
+            var.suffixes().last(),
+            Some(Suffix::Index(Index::Dot { name, .. })) if token_name(name) == "Magnitude"
+        ),
+        Expression::FunctionCall(call) => {
+            let text = compact(call);
+            text.contains("DistanceFromCharacter")
+                || text.starts_with("math.abs(")
+                || text.starts_with("string.len(")
+        }
+        _ => false,
+    }
+}
+
 /// Arguments of a call, as expressions.
 pub(crate) fn args_exprs(args: &FunctionArgs) -> Vec<&Expression> {
     match args {
@@ -350,8 +373,8 @@ impl<'a> Analyzer<'a> {
                 let mut values = self.eval_list(frame, &mut state, &exprs);
                 // `local ok = isValid(x)`: remember the condition behind `ok`.
                 if let (Some(first), Some(expr)) = (values.first_mut(), exprs.first()) {
-                    if is_condition(expr) {
-                        first.condition = Some(expr);
+                    if is_condition(expr) || is_measure(expr) {
+                        first.defined_by = Some(expr);
                     }
                 }
                 for (i, name) in local.names().iter().enumerate() {
@@ -421,10 +444,50 @@ impl<'a> Analyzer<'a> {
                     let loc = self.loc(frame.file, decl.name());
                     let top_level = frame.closure.is_none();
                     self.register_entry(
-                        vec![Func::Closure(closure)],
+                        vec![Func::Closure(closure.clone())],
                         EntryKind::Custom {
                             trusted: source.trusted_parameters,
                             name: display.clone(),
+                            self_path: method.as_ref().map(|_| {
+                                let root = frame
+                                    .lookup(&names[0])
+                                    .unwrap_or_else(|| global_id(frame.file, &names[0]));
+                                let keys =
+                                    names[1..].iter().map(|s| Rc::from(s.as_str())).collect();
+                                (root, keys)
+                            }),
+                        },
+                        loc,
+                        &state,
+                        false,
+                        top_level,
+                    );
+                }
+                let last = full.last().map(String::as_str).unwrap_or("");
+                let top_level = frame.closure.is_none();
+                let loc = self.loc(frame.file, decl.name());
+                if last == "OnServerInvoke" && full.len() > 1 {
+                    // `function Remote.OnServerInvoke(player, ...)`
+                    self.register_entry(
+                        vec![Func::Closure(closure.clone())],
+                        EntryKind::Remote {
+                            event: "OnServerInvoke",
+                            remote: full[..full.len() - 1].join("."),
+                        },
+                        loc,
+                        &state,
+                        false,
+                        top_level,
+                    );
+                } else if matches!(
+                    last,
+                    "KnitStart" | "KnitInit" | "Start" | "Init" | "OnStart" | "OnInit"
+                ) {
+                    // Lifecycle methods called by frameworks: they often connect remotes.
+                    self.register_entry(
+                        vec![Func::Closure(closure.clone())],
+                        EntryKind::Callback {
+                            player_param: false,
                         },
                         loc,
                         &state,
@@ -797,6 +860,8 @@ impl<'a> Analyzer<'a> {
         match var {
             Var::Name(token) => {
                 let name = token_name(token);
+                // luau-shield007 lock pattern: `debounce = true`.
+                self.note_lock_write(&name, &value, false);
                 let value = value.step(loc, &format!("assigned to `{name}`"));
                 self.write_name(frame, state, &name, value);
             }
@@ -871,16 +936,9 @@ impl<'a> Analyzer<'a> {
                         );
                     }
                 }
-                // luau-shield007 lock pattern: `busy[player] = true`.
-                if let Key::Dynamic(key_value, _) = &key {
-                    if key_value.player_rel
-                        && !matches!(value.kind, Kind::Nil | Kind::Bool(Some(false)))
-                    {
-                        if let Some(entry) = self.entry.as_mut() {
-                            entry.lock_writes.insert(base_display.clone());
-                        }
-                    }
-                }
+                // luau-shield007 lock pattern: `busy[player] = true`, `tool.Enabled = false`.
+                let per_player = matches!(&key, Key::Dynamic(k, _) if k.player_rel);
+                self.note_lock_write(&target_display, &value, per_player);
                 // Store into a table we track.
                 if let Some((root, keys)) = self.static_path(frame, var_expr.prefix(), init) {
                     let mut keys = keys;
@@ -898,6 +956,19 @@ impl<'a> Analyzer<'a> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Records an assignment that can set a lock (luau-shield007).
+    pub(crate) fn note_lock_write(&mut self, target: &str, value: &Value<'a>, per_player: bool) {
+        if self.peek > 0 || matches!(value.kind, Kind::Nil) {
+            return;
+        }
+        if let Some(entry) = self.entry.as_mut() {
+            entry.lock_writes.insert(target.to_string());
+            if per_player {
+                entry.per_player_writes.insert(target.to_string());
+            }
         }
     }
 
@@ -1436,6 +1507,7 @@ impl<'a> Analyzer<'a> {
             _ => None,
         };
         let count = suffixes.len();
+        let mut last_client_argument: Option<Target> = None;
         for (i, suffix) in suffixes.iter().enumerate() {
             let is_last = i + 1 == count;
             match suffix {
@@ -1451,6 +1523,7 @@ impl<'a> Analyzer<'a> {
                         }
                         Index::Brackets { expression, .. } => {
                             let k = self.eval(frame, state, expression);
+                            last_client_argument = self.client_variable(frame, expression, &k);
                             match k.str_const() {
                                 Some(s) if !k.is_tainted() => {
                                     if let Some(p) = callee_path.as_mut() {
@@ -1502,6 +1575,10 @@ impl<'a> Analyzer<'a> {
                         Call::AnonymousCall(args) => {
                             let arg_exprs = args_exprs(args);
                             let arg_values = self.eval_args(frame, state, args);
+                            last_client_argument = match (arg_exprs.first(), arg_values.first()) {
+                                (Some(e), Some(v)) => self.client_variable(frame, e, v),
+                                _ => None,
+                            };
                             results = self.call_value(
                                 frame,
                                 state,
@@ -1519,6 +1596,10 @@ impl<'a> Analyzer<'a> {
                             let name = token_name(method.name());
                             let arg_exprs = args_exprs(method.args());
                             let arg_values = self.eval_args(frame, state, method.args());
+                            last_client_argument = match (arg_exprs.first(), arg_values.first()) {
+                                (Some(e), Some(v)) => self.client_variable(frame, e, v),
+                                _ => None,
+                            };
                             let mut path = callee_path.clone();
                             if let Some(p) = path.as_mut() {
                                 p.push(name.clone());
@@ -1559,8 +1640,31 @@ impl<'a> Analyzer<'a> {
                     first.origin = Some(Target::Var(id));
                 }
             }
+            // `Players:GetPlayerFromCharacter(model)`, `PlotOwners[plot]`: a
+            // server value computed from a client Instance variable.
+            if let Some(first) = results.first_mut() {
+                if first.origin.is_none() && !first.is_tainted() {
+                    first.origin = last_client_argument.take();
+                }
+            }
         }
         results
+    }
+
+    /// `Target::Var` of `expr` when it is a local variable holding client data.
+    fn client_variable(
+        &self,
+        frame: &Frame<'a>,
+        expr: &'a Expression,
+        value: &Value<'a>,
+    ) -> Option<Target> {
+        if !value.is_tainted() {
+            return None;
+        }
+        match unwrap_expr(expr) {
+            Expression::Var(Var::Name(token)) => frame.lookup(&token_name(token)).map(Target::Var),
+            _ => None,
+        }
     }
 
     pub(crate) fn eval_args(
@@ -1622,11 +1726,23 @@ impl<'a> Analyzer<'a> {
             result.path = Some(path);
         }
         result.player_rel |= base.player_rel;
-        // Fields of untrusted values are untrusted.
+        // Fields of untrusted values are untrusted. Components of a bounded
+        // vector are bounded, and `.Unit` has length 1.
+        let component = matches!(key.name(), Some("X" | "Y" | "Z" | "Magnitude"));
+        let unit = key.name() == Some("Unit");
         for flow in &base.flows {
             let instance = flow.any(check::TYPE_INSTANCE) || flow.instance_data;
+            let mut inherited = check::INHERITED_BY_FIELDS;
+            if component {
+                inherited |= check::BOUNDS | check::NAN_SAFE;
+            }
+            let extra = if unit {
+                check::BOUNDS | check::TYPE_OTHER
+            } else {
+                0
+            };
             result.add_flows([Flow {
-                checks: flow.checks & check::INHERITED_BY_FIELDS,
+                checks: (flow.checks & inherited) | extra,
                 raw: flow.raw,
                 instance_data: instance && flow.raw || flow.instance_data,
                 ..flow.clone()
@@ -1690,10 +1806,17 @@ impl<'a> Analyzer<'a> {
 
 /// Copy of `value` with `keys` set to `field` (tables only).
 fn with_field<'a>(value: &Value<'a>, keys: &[Rc<str>], field: Value<'a>) -> Option<Value<'a>> {
-    let Kind::Table(table) = &value.kind else {
-        return None;
+    let mut table = match &value.kind {
+        Kind::Table(table) => (**table).clone(),
+        // `local Service = Knit.CreateService({...})` then `function Service:Buy()`:
+        // keep the methods even though the object itself is unknown.
+        Kind::Unknown
+            if !value.is_tainted() && keys.len() == 1 && matches!(field.kind, Kind::Func(_)) =>
+        {
+            Table::default()
+        }
+        _ => return None,
     };
-    let mut table = (**table).clone();
     let (first, rest) = keys.split_first()?;
     if rest.is_empty() {
         table.fields.insert(first.clone(), field);

@@ -423,6 +423,8 @@ impl<'a> Analyzer<'a> {
         }
         if (recv.is_service("Debris") && name == "AddItem")
             || (recv.is_service("CollectionService") && matches!(name, "AddTag" | "RemoveTag"))
+            || (recv.is_service("TweenService") && name == "Create")
+            || matches!(name, "EquipTool" | "SetNetworkOwner")
         {
             if let Some(arg) = args.first() {
                 self.check_instance_use(arg, loc, &format!("`{call}` is called"));
@@ -480,6 +482,9 @@ impl<'a> Analyzer<'a> {
         if name == "SetAttribute" {
             let attr = args.first();
             let value = args.get(1);
+            if let (Some(a), Some(v)) = (attr.and_then(|a| a.str_const()), value) {
+                self.note_lock_write(&format!("{recv_display}@{a}"), v, recv.player_rel);
+            }
             if let (Some(attr), Some(value)) = (attr, value) {
                 let what = format!("is written by `{call}`");
                 match attr.str_const() {
@@ -838,6 +843,18 @@ impl<'a> Analyzer<'a> {
                 }
             }
         }
+        // `Knit.CreateService({ Name = ..., Client = {} })` returns its table.
+        if matches!(last_name.as_str(), "CreateService" | "CreateController") {
+            if let Some(table) = args.first().filter(|a| matches!(a.kind, Kind::Table(_))) {
+                let mut table = table.clone();
+                if let Kind::Table(t) = &table.kind {
+                    let mut t = (**t).clone();
+                    t.fresh_frame = None;
+                    table.kind = Kind::Table(Rc::new(t));
+                }
+                return vec![table];
+            }
+        }
         // Callbacks passed to unknown functions may run: analyse them once
         // with unknown arguments so that sinks using captured values are seen.
         let mut funcs = Vec::new();
@@ -975,7 +992,7 @@ impl<'a> Analyzer<'a> {
         }
         // Conditions refer to the callee's variables: they mean nothing here.
         for value in &mut returns {
-            value.condition = None;
+            value.defined_by = None;
         }
         (returns, frame.summary.take())
     }
@@ -1243,6 +1260,11 @@ impl<'a> Analyzer<'a> {
             Builtin::Getmetatable => vec![Value::unknown()],
             Builtin::Print | Builtin::TableSort => Vec::new(),
             Builtin::Spawn => {
+                if display.ends_with("delay") {
+                    if let Some(entry) = self.entry.as_mut() {
+                        entry.waits = true;
+                    }
+                }
                 let (index, rest_from) = if display.ends_with("delay") {
                     (1, 2)
                 } else {
@@ -1261,9 +1283,29 @@ impl<'a> Analyzer<'a> {
                 }
                 vec![Value::unknown()]
             }
-            Builtin::Wait => vec![Value::of(Kind::Number(None))],
+            Builtin::Wait => {
+                if let Some(entry) = self.entry.as_mut() {
+                    entry.waits = true;
+                }
+                vec![Value::of(Kind::Number(None))]
+            }
             Builtin::TableInsert => {
                 let value = args.last().cloned().unwrap_or_default();
+                // `table.insert(profile.Data.Pets, pet)`: a write into saved data.
+                if let (Some(expr), Some(list)) = (arg_exprs.first(), args.first()) {
+                    let container =
+                        format!("{} {}", list.path.as_deref().unwrap_or(""), compact(*expr));
+                    let fresh =
+                        matches!(&list.kind, Kind::Table(t) if t.fresh_frame == Some(frame.id));
+                    let client_table = list.flows.iter().any(|f| f.raw);
+                    if !fresh
+                        && !client_table
+                        && (path_has_data(&container) || path_has_stat(&container))
+                    {
+                        let what = format!("is inserted into `{}`", compact(*expr));
+                        self.check_value(RuleId::Ls001, SinkKind::Economy, &value, loc, &what);
+                    }
+                }
                 if let Some(expr) = arg_exprs.first() {
                     if let Some(target) = self.target_of(frame, expr) {
                         let (root, keys): (u64, Vec<Rc<str>>) = match &target {
@@ -1334,6 +1376,16 @@ impl<'a> Analyzer<'a> {
                 Kind::Number(None),
                 check::TYPE_NUMBER,
             )],
+            Builtin::StringSub => {
+                let mut v = derived_with(&arg(0), Kind::Str(None), check::TYPE_STRING);
+                if args.len() >= 3 && args[1..].iter().all(|a| !a.is_tainted()) {
+                    v.add_checks(check::LENGTH);
+                }
+                for a in args.iter().skip(1) {
+                    v.add_flows(a.derived().flows);
+                }
+                vec![v]
+            }
             Builtin::StringMatch
             | Builtin::StringFind
             | Builtin::StringFormat
@@ -1511,6 +1563,12 @@ impl<'a> Analyzer<'a> {
                     event: "OnServerEvent",
                     remote: remote.to_string(),
                 })
+            } else if recv_display.contains(".Client.") || recv_display.starts_with("Client.") {
+                // Knit RemoteSignal: `Service.Client.Buy:Connect(function(player, ...))`.
+                Some(EntryKind::Remote {
+                    event: "Connect",
+                    remote: recv_display.to_string(),
+                })
             } else if recv_display.ends_with(".Chatted") {
                 Some(EntryKind::Chat)
             } else if recv_display.ends_with(".PlayerAdded") {
@@ -1586,6 +1644,10 @@ impl<'a> Analyzer<'a> {
                 }
                 result.kind = Kind::Str(None);
                 result.add_flows(recv.derived().flows);
+                // `s:sub(1, 100)` caps the length.
+                if name == "sub" && args.len() >= 2 && args.iter().all(|a| !a.is_tainted()) {
+                    result.add_checks(check::LENGTH | check::TYPE_STRING);
+                }
                 if matches!(name, "match" | "find" | "gmatch") {
                     for arg in &args {
                         result.add_flows(arg.derived().flows);
@@ -1594,6 +1656,21 @@ impl<'a> Analyzer<'a> {
                 }
             } else {
                 result.add_flows(recv.derived().flows);
+            }
+        }
+        // Callbacks passed to unresolved methods (`promise:andThen(fn)`,
+        // `DataManager:Update(player, fn)`) may run: analyse them once.
+        if self.peek == 0 {
+            for arg in &args {
+                for func in arg.funcs() {
+                    if let Func::Closure(closure) = func {
+                        if self.inlined_callbacks.insert(closure.key()) {
+                            let mut s = state.clone();
+                            let _ =
+                                self.call_closure(&mut s, closure, Vec::new(), None, loc, false);
+                        }
+                    }
+                }
             }
         }
         let lookup =

@@ -321,6 +321,8 @@ pub enum Builtin {
     StringFind,
     StringFormat,
     StringByte,
+    /// `string.sub(s, i, j)`: with server bounds, caps the length.
+    StringSub,
     /// Other string functions returning a derived string.
     StringOther,
     InstanceNew,
@@ -420,9 +422,10 @@ pub struct Value<'a> {
     /// The value was looked up in a server collection with an untrusted key:
     /// proving it is non-nil allow-lists that key.
     pub witness: Option<Target>,
-    /// The boolean condition this value was computed from
-    /// (`local ok = isValid(x)`): testing the value tests the condition.
-    pub condition: Option<&'a Expression>,
+    /// The expression a local was initialised with, when it is a check
+    /// (`local ok = isValid(x)`) or a measure (`local d = (a - b).Magnitude`):
+    /// testing the local tests that expression.
+    pub defined_by: Option<&'a Expression>,
     /// The client Instance variable this value was read from
     /// (`local owner = car:FindFirstChild("Owner")`): verifying the value's
     /// ownership also verifies the Instance.
@@ -585,7 +588,7 @@ impl<'a> Value<'a> {
             } else {
                 None
             },
-            condition: match (self.condition, other.condition) {
+            defined_by: match (self.defined_by, other.defined_by) {
                 (Some(a), Some(b)) if std::ptr::eq(a, b) => Some(a),
                 _ => None,
             },

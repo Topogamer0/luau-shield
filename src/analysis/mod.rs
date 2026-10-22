@@ -16,7 +16,7 @@ use full_moon::tokenizer::TokenReference;
 use state::{Frame, State, Summary};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use value::{Closure, Flow, Func, ObjClass, Source, SourceKind, Value, VarId};
+use value::{Closure, Flow, Func, Kind, ObjClass, Source, SourceKind, Value, VarId};
 
 /// Statements interpreted per entry point before giving up on deeper calls.
 const ENTRY_BUDGET: usize = 60_000;
@@ -94,7 +94,13 @@ pub(crate) enum EntryKind {
     /// `Player.Chatted` handler.
     Chat,
     /// Function matched by a configured source pattern.
-    Custom { trusted: usize, name: String },
+    Custom {
+        trusted: usize,
+        name: String,
+        /// `Service.Client` for `function Service.Client:Method()`: `self` is
+        /// that table, and `self.Server` is `Service` (Knit).
+        self_path: Option<(VarId, Vec<Rc<str>>)>,
+    },
     /// Any other callback (event connections, spawned threads): trusted parameters.
     Callback { player_param: bool },
 }
@@ -114,6 +120,10 @@ pub(crate) struct EntryCtx {
     rate_limited: bool,
     lock_reads: HashSet<String>,
     lock_writes: HashSet<String>,
+    /// Locks keyed by the player (`busy[player]`, a player attribute).
+    per_player_writes: HashSet<String>,
+    /// The handler waits (`task.wait`, `task.delay`) before releasing locks.
+    waits: bool,
 }
 
 enum ModuleState<'a> {
@@ -396,7 +406,7 @@ impl<'a> Analyzer<'a> {
             if !self.analysed_entries.insert((kf, kb, kind_tag, reg_key)) {
                 continue;
             }
-            let args = self.entry_args(closure, &pending.kind);
+            let args = self.entry_args(closure, &pending.kind, &base);
             let is_remote = matches!(pending.kind, EntryKind::Remote { .. });
             if is_remote {
                 self.entry = Some(EntryCtx {
@@ -417,7 +427,12 @@ impl<'a> Analyzer<'a> {
             );
             if is_remote {
                 let ctx = self.entry.take().unwrap_or_default();
-                let locked = ctx.lock_reads.iter().any(|t| ctx.lock_writes.contains(t));
+                // A per-player lock always limits the player; a global flag
+                // (`debounce`, `tool.Enabled`) only when the handler waits
+                // before releasing it.
+                let locked = ctx.lock_reads.iter().any(|t| {
+                    ctx.per_player_writes.contains(t) || (ctx.waits && ctx.lock_writes.contains(t))
+                });
                 if !ctx.expensive.is_empty() && !ctx.rate_limited && !locked {
                     let EntryKind::Remote { event, remote } = &pending.kind else {
                         unreachable!()
@@ -455,6 +470,7 @@ impl<'a> Analyzer<'a> {
         &mut self,
         closure: &Rc<Closure<'a>>,
         kind: &EntryKind,
+        base: &State<'a>,
     ) -> (Vec<Value<'a>>, Option<Value<'a>>) {
         let body = closure.body;
         let file = closure.file;
@@ -469,7 +485,35 @@ impl<'a> Analyzer<'a> {
         // A method declared with `:` receives `self` implicitly: it is not a
         // value chosen by the client.
         if closure.is_method {
-            args.push(Value::unknown().with_path("self"));
+            let mut self_value = Value::unknown().with_path("self");
+            if let EntryKind::Custom {
+                self_path: Some((root, keys)),
+                ..
+            } = kind
+            {
+                let service = base.vars.get(root).cloned().or_else(|| {
+                    self.statics
+                        .get(&closure.file)
+                        .and_then(|s| s.get(root))
+                        .cloned()
+                });
+                if let Some(service) = service {
+                    let mut client = service.clone();
+                    for key in keys {
+                        client = match &client.kind {
+                            Kind::Table(t) => t.fields.get(key).cloned().unwrap_or_default(),
+                            _ => Value::unknown(),
+                        };
+                    }
+                    let mut table = match &client.kind {
+                        Kind::Table(t) => (**t).clone(),
+                        _ => value::Table::default(),
+                    };
+                    table.fields.insert(Rc::from("Server"), service);
+                    self_value = Value::of(Kind::Table(Rc::new(table))).with_path("self");
+                }
+            }
+            args.push(self_value);
         }
         let player = |name: &str| {
             let mut v = Value::obj(ObjClass::Player, None, name);

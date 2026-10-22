@@ -609,7 +609,7 @@ expression: "report::json::render(&report)"
       "end_column": 59,
       "end_line": 28,
       "file": "tests/fixtures/luau-shield001/vulnerable/ordered-incrementasync.server.luau",
-      "fix": "Missing: an upper bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key.",
+      "fix": "Missing: an upper bound. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key.",
       "flow": [
         {
           "column": 48,

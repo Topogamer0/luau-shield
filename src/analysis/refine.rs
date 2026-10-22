@@ -1,7 +1,9 @@
 //! Conditions: what a guard teaches us about untrusted values on each branch.
 
 use super::calls::looks_like_validator;
-use super::interp::{args_exprs, is_falsy_literal, string_literal, symbol_of, unwrap_expr};
+use super::interp::{
+    args_exprs, is_condition, is_falsy_literal, string_literal, symbol_of, unwrap_expr,
+};
 use super::state::{Facts, Frame, Refinement, State};
 use super::value::{Builtin, Checks, Func, Kind, SourceKind, Target, Value, check};
 use super::{Analyzer, token_name};
@@ -215,6 +217,19 @@ impl<'a> Analyzer<'a> {
     pub(crate) fn apply_facts(&self, state: &mut State<'a>, facts: &Facts) {
         for (target, checks) in &facts.map {
             state.add_checks(target, *checks);
+            // Verifying an Instance also verifies what was read from it
+            // earlier (`local handle = tool.Handle` before checking `tool`).
+            if checks & check::OWNERSHIP != 0 {
+                let derived: Vec<Target> = state
+                    .vars
+                    .iter()
+                    .filter(|(_, v)| v.origin.as_ref() == Some(target) && v.is_tainted())
+                    .map(|(id, _)| Target::Var(*id))
+                    .collect();
+                for d in derived {
+                    state.add_checks(&d, check::OWNERSHIP | check::TYPE_INSTANCE);
+                }
+            }
         }
     }
 
@@ -266,6 +281,58 @@ impl<'a> Analyzer<'a> {
         out
     }
 
+    /// `math.floor(x)` compared with `x`, or `x % n` compared with a number:
+    /// returns `x`.
+    fn integer_test(
+        &self,
+        frame: &Frame<'a>,
+        a: &'a Expression,
+        b: &'a Expression,
+    ) -> Option<Target> {
+        match unwrap_expr(a) {
+            Expression::FunctionCall(call) => {
+                let text = super::compact(call);
+                let rounding = ["math.floor(", "math.ceil(", "math.round("]
+                    .iter()
+                    .any(|p| text.starts_with(p));
+                if !rounding {
+                    return None;
+                }
+                let (_, _, last) = split_call(call)?;
+                let Call::AnonymousCall(args) = last else {
+                    return None;
+                };
+                let inner = args_exprs(args).into_iter().next()?;
+                let x = self.target_of(frame, inner)?;
+                (self.target_of(frame, b)? == x).then_some(x)
+            }
+            Expression::BinaryOperator {
+                lhs,
+                binop: BinOp::Percent(_),
+                rhs,
+            } => {
+                let numeric = |e: &Expression| matches!(unwrap_expr(e), Expression::Number(_));
+                if numeric(rhs) && numeric(b) {
+                    self.target_of(frame, lhs)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// The Instances the values of `targets` were read from.
+    fn origins_of(&self, state: &State<'a>, targets: Vec<Target>) -> Vec<Target> {
+        targets
+            .iter()
+            .filter_map(|t| match t {
+                Target::Var(id) => state.vars.get(id).and_then(|v| v.origin.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// `targets` plus the Instances they were read from.
     fn with_origins(&self, state: &State<'a>, targets: Vec<Target>) -> Vec<Target> {
         let mut out = targets.clone();
@@ -303,6 +370,16 @@ impl<'a> Analyzer<'a> {
         expr: &'a Expression,
     ) -> Vec<(Target, Measure)> {
         let expr = unwrap_expr(expr);
+        // `local distance = (a - b).Magnitude; if distance > 10 then return end`
+        if let Expression::Var(Var::Name(token)) = expr {
+            if let Some(id) = frame.lookup(&token_name(token)) {
+                if let Some(defined) = state.vars.get(&id).and_then(|v| v.defined_by) {
+                    if !std::ptr::eq(defined, expr) {
+                        return self.measure_roots(frame, state, defined);
+                    }
+                }
+            }
+        }
         let with = |targets: Vec<Target>, m: Measure| {
             targets.into_iter().map(|t| (t, m)).collect::<Vec<_>>()
         };
@@ -468,8 +545,8 @@ impl<'a> Analyzer<'a> {
             Expression::Var(Var::Name(token)) => {
                 // `local ok = isValid(x); if not ok then return end`
                 let value = self.read_name(frame, state, &token_name(token));
-                match value.condition {
-                    Some(condition) if self.condition_depth < 4 => {
+                match value.defined_by {
+                    Some(condition) if is_condition(condition) && self.condition_depth < 4 => {
                         self.condition_depth += 1;
                         let r = self.refine_condition(frame, state, condition);
                         self.condition_depth -= 1;
@@ -495,23 +572,11 @@ impl<'a> Analyzer<'a> {
         if let Some(witness) = &value.witness {
             on_true.add(witness.clone(), check::ALLOWLIST);
         }
-        // luau-shield007 lock pattern: `if busy[player] then return end`.
-        if let Expression::Var(Var::Expression(var)) = unwrap_expr(expr) {
-            let suffixes: Vec<&'a Suffix> = var.suffixes().collect();
-            if let Some((Suffix::Index(Index::Brackets { expression, .. }), init)) =
-                suffixes.split_last()
-            {
-                let key = self.peek(frame, state, expression);
-                if key.player_rel {
-                    let mut base = super::compact(var.prefix());
-                    for s in init {
-                        base.push_str(&super::compact(*s));
-                    }
-                    if self.entry.is_some() {
-                        self.pending_lock_reads.push(base);
-                    }
-                }
-            }
+        // luau-shield007 lock pattern: `if busy[player] then return end`,
+        // `if debounce then return end`, `if not tool.Enabled then return end`.
+        if self.entry.is_some() {
+            self.pending_lock_reads
+                .push(super::compact(unwrap_expr(expr)));
         }
         Refinement {
             on_true,
@@ -559,6 +624,26 @@ impl<'a> Analyzer<'a> {
                 if let Some(target) = self.target_of(frame, arg) {
                     facts.add(target, type_checks(&ty));
                 }
+                return if cmp == Cmp::Eq {
+                    Refinement {
+                        on_true: facts,
+                        on_false: Facts::default(),
+                    }
+                } else {
+                    Refinement {
+                        on_true: Facts::default(),
+                        on_false: facts,
+                    }
+                };
+            }
+        }
+        // `math.floor(x) ~= x` / `x % 1 ~= 0` reject NaN (and non-integers).
+        if matches!(cmp, Cmp::Eq | Cmp::Ne) {
+            if let Some(target) = self
+                .integer_test(frame, lhs, rhs)
+                .or_else(|| self.integer_test(frame, rhs, lhs))
+            {
+                let facts = Facts::single(target, check::NAN_SAFE | check::TYPE_NUMBER);
                 return if cmp == Cmp::Eq {
                     Refinement {
                         on_true: facts,
@@ -623,6 +708,27 @@ impl<'a> Analyzer<'a> {
         } else if right.is_tainted() && !left.is_tainted() {
             (rhs, left, cmp.flip())
         } else if !left.is_tainted() && !right.is_tainted() && matches!(cmp, Cmp::Eq | Cmp::Ne) {
+            // `ALLOWED[x] == true`: a lookup proven truthy allow-lists its key.
+            for (side, other) in [(&left, &right), (&right, &left)] {
+                let truthy_literal = matches!(
+                    other.kind,
+                    Kind::Bool(Some(true)) | Kind::Number(Some(_)) | Kind::Str(Some(_))
+                );
+                if let (Some(witness), true) = (&side.witness, truthy_literal) {
+                    let facts = Facts::single(witness.clone(), check::ALLOWLIST);
+                    return if cmp == Cmp::Eq {
+                        Refinement {
+                            on_true: facts,
+                            on_false: Facts::default(),
+                        }
+                    } else {
+                        Refinement {
+                            on_true: Facts::default(),
+                            on_false: facts,
+                        }
+                    };
+                }
+            }
             // `Players:GetPlayerFromCharacter(inst.Parent) == player`: the
             // lookup result is server data, but it is computed from a client
             // Instance, and comparing it with a server value proves ownership.
@@ -632,10 +738,17 @@ impl<'a> Analyzer<'a> {
                     other.kind,
                     Kind::Number(Some(_)) | Kind::Str(Some(_)) | Kind::Bool(Some(_)) | Kind::Nil
                 );
-                if literal || matches!(unwrap_expr(side), Expression::Var(Var::Name(_))) {
+                if literal {
                     continue;
                 }
-                for root in self.with_origins(state, self.tainted_roots(frame, state, side)) {
+                let roots = if matches!(unwrap_expr(side), Expression::Var(Var::Name(_))) {
+                    // `local owner = Players:GetPlayerFromCharacter(model)` ... `owner ~= player`
+                    let target: Vec<Target> = self.target_of(frame, side).into_iter().collect();
+                    self.origins_of(state, target)
+                } else {
+                    self.with_origins(state, self.tainted_roots(frame, state, side))
+                };
+                for root in roots {
                     let facts = check::OWNERSHIP | check::TYPE_INSTANCE;
                     if cmp == Cmp::Eq {
                         r.on_true.add(root, facts);
@@ -700,32 +813,41 @@ impl<'a> Analyzer<'a> {
             }
         }
         let bare_var = matches!(unwrap_expr(tainted_expr), Expression::Var(Var::Name(_)));
-        if !bare_var {
-            // `inst.Parent == player.Character`, `inst:GetAttribute("Owner") == player.UserId`
-            if matches!(cmp, Cmp::Eq | Cmp::Ne) && !is_literal && !matches!(other.kind, Kind::Nil) {
-                for root in self.with_origins(state, self.tainted_roots(frame, state, tainted_expr))
-                {
-                    if Some(&root) == direct.as_ref() {
-                        continue;
-                    }
-                    let facts = check::OWNERSHIP | check::TYPE_INSTANCE;
-                    if cmp == Cmp::Eq {
-                        r.on_true.add(root, facts);
-                    } else {
-                        r.on_false.add(root, facts);
-                    }
+        // `inst.Parent == player.Character`, `inst:GetAttribute("Owner") == player.UserId`,
+        // or `owner == player.UserId` where `owner` was read from the Instance.
+        if matches!(cmp, Cmp::Eq | Cmp::Ne) && !is_literal && !matches!(other.kind, Kind::Nil) {
+            let roots = if bare_var {
+                self.origins_of(state, direct.iter().cloned().collect())
+            } else {
+                self.with_origins(state, self.tainted_roots(frame, state, tainted_expr))
+            };
+            for root in roots {
+                if Some(&root) == direct.as_ref() {
+                    continue;
+                }
+                let facts = check::OWNERSHIP | check::TYPE_INSTANCE;
+                if cmp == Cmp::Eq {
+                    r.on_true.add(root, facts);
+                } else {
+                    r.on_false.add(root, facts);
                 }
             }
-            // `#name <= 20`, `(pos - root.Position).Magnitude < 10`
-            let upper_on_true = matches!(cmp, Cmp::Lt | Cmp::Le);
-            let upper_on_false = matches!(cmp, Cmp::Gt | Cmp::Ge);
-            if upper_on_true || upper_on_false {
-                for (target, measure) in self.measure_roots(frame, state, tainted_expr) {
-                    let facts = match measure {
-                        Measure::Length => check::LENGTH,
-                        Measure::Abs => check::BOUNDS,
-                        Measure::Distance => check::BOUNDS | check::OWNERSHIP,
-                    };
+        }
+        // `#name <= 20`, `(pos - root.Position).Magnitude < 10`, `distance > 10`
+        let upper_on_true = matches!(cmp, Cmp::Lt | Cmp::Le);
+        let upper_on_false = matches!(cmp, Cmp::Gt | Cmp::Ge);
+        if upper_on_true || upper_on_false {
+            for (target, measure) in self.measure_roots(frame, state, tainted_expr) {
+                let facts = match measure {
+                    Measure::Length => check::LENGTH,
+                    Measure::Abs => check::BOUNDS,
+                    Measure::Distance => check::BOUNDS | check::OWNERSHIP,
+                };
+                let mut targets = vec![target];
+                if measure == Measure::Distance {
+                    targets = self.with_origins(state, targets);
+                }
+                for target in targets {
                     if upper_on_true {
                         r.on_true.add(target, facts | check::NAN_SAFE);
                     } else {
@@ -763,6 +885,19 @@ impl<'a> Analyzer<'a> {
                     "IsA" => {
                         if let Some(t) = recv_target {
                             on_true.add(t, check::TYPE_INSTANCE);
+                        }
+                    }
+                    "GetAttribute" => {
+                        // luau-shield007: `if player:GetAttribute("Busy") then return end`
+                        if let (Some(attr), true) = (
+                            args.first().and_then(|e| string_const(e)),
+                            self.entry.is_some(),
+                        ) {
+                            let mut recv_text = super::compact(prefix);
+                            for s in &init {
+                                recv_text.push_str(&super::compact(*s));
+                            }
+                            self.pending_lock_reads.push(format!("{recv_text}@{attr}"));
                         }
                     }
                     "HasTag" => {

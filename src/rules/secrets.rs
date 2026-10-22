@@ -31,7 +31,8 @@ fn patterns() -> &'static [Pattern] {
         let raw: &[(&str, &str)] = &[
             (
                 "Discord webhook URL",
-                r"https?://(?:(?:canary|ptb)\.)?discord(?:app)?\.com/api(?:/v\d+)?/webhooks/\d{5,}/[A-Za-z0-9_\-]{20,}",
+                // discord.com and the proxies Roblox games use (same path).
+                r"https?://[A-Za-z0-9.\-]+(?::\d+)?/api(?:/v\d+)?/webhooks/\d{5,}/[A-Za-z0-9_\-]{20,}",
             ),
             (
                 "Guilded webhook URL",
@@ -145,6 +146,7 @@ fn secret_name(name: &str) -> bool {
         "credential",
         "cookie",
         "authkey",
+        "opencloud",
         "authtoken",
         "passphrase",
         "robloxsecurity",
@@ -174,6 +176,11 @@ fn credential_like(value: &str, password: bool) -> bool {
         .or_else(|| value.strip_prefix("Basic "))
         .unwrap_or(value);
     if value.len() < 16 || is_placeholder(value) {
+        return false;
+    }
+    // Content ids and URLs are public (`rbxassetid://123`); credentials in a
+    // URL are found by the URL patterns.
+    if value.contains("://") || value.chars().all(|c| c.is_ascii_digit()) {
         return false;
     }
     if value.contains(char::is_whitespace) {
@@ -384,6 +391,13 @@ mod tests {
         assert!(hits(r#"local url = "https://games.roblox.com/v1/games""#).is_empty());
         assert!(hits(r#"local passwordHint = "Must be 8 characters""#).is_empty());
         assert!(hits(r#"local API_KEY = "sk-your-key-here-0000000000000000""#).is_empty());
+        assert!(hits(r#"local TOKEN_ICON = "rbxassetid://1234567890123""#).is_empty());
+        assert_eq!(
+            hits(
+                r#"local u = "https://hooks.hyra.io/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyzABCDEF""#
+            ),
+            ["Discord webhook URL"]
+        );
     }
 
     #[test]

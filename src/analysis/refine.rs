@@ -393,6 +393,19 @@ impl<'a> Analyzer<'a> {
                 },
             },
             Expression::FunctionCall(call) => self.refine_call(frame, state, call),
+            Expression::Var(Var::Name(token)) => {
+                // `local ok = isValid(x); if not ok then return end`
+                let value = self.read_name(frame, state, &token_name(token));
+                match value.condition {
+                    Some(condition) if self.condition_depth < 4 => {
+                        self.condition_depth += 1;
+                        let r = self.refine_condition(frame, state, condition);
+                        self.condition_depth -= 1;
+                        r
+                    }
+                    _ => self.refine_truthy(frame, state, expr),
+                }
+            }
             Expression::Var(_) => self.refine_truthy(frame, state, expr),
             _ => Refinement::default(),
         }

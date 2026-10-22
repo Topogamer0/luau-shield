@@ -236,6 +236,28 @@ pub(crate) fn is_falsy_literal(expr: &Expression) -> bool {
     }
 }
 
+/// An expression whose value is the outcome of a check.
+pub(crate) fn is_condition(expr: &Expression) -> bool {
+    match unwrap_expr(expr) {
+        Expression::BinaryOperator { binop, .. } => matches!(
+            binop,
+            BinOp::And(_)
+                | BinOp::Or(_)
+                | BinOp::TwoEqual(_)
+                | BinOp::TildeEqual(_)
+                | BinOp::LessThan(_)
+                | BinOp::LessThanEqual(_)
+                | BinOp::GreaterThan(_)
+                | BinOp::GreaterThanEqual(_)
+        ),
+        Expression::UnaryOperator {
+            unop: UnOp::Not(_), ..
+        } => true,
+        Expression::FunctionCall(_) => true,
+        _ => false,
+    }
+}
+
 /// Arguments of a call, as expressions.
 pub(crate) fn args_exprs(args: &FunctionArgs) -> Vec<&Expression> {
     match args {
@@ -325,7 +347,13 @@ impl<'a> Analyzer<'a> {
         match stmt {
             Stmt::LocalAssignment(local) => {
                 let exprs: Vec<&'a Expression> = local.expressions().iter().collect();
-                let values = self.eval_list(frame, &mut state, &exprs);
+                let mut values = self.eval_list(frame, &mut state, &exprs);
+                // `local ok = isValid(x)`: remember the condition behind `ok`.
+                if let (Some(first), Some(expr)) = (values.first_mut(), exprs.first()) {
+                    if is_condition(expr) {
+                        first.condition = Some(expr);
+                    }
+                }
                 for (i, name) in local.names().iter().enumerate() {
                     let value = values.get(i).cloned().unwrap_or_else(Value::nil);
                     self.declare_local(frame, &mut state, name, value);

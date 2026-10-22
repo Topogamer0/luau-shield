@@ -149,6 +149,8 @@ pub struct Analyzer<'a> {
     /// > 0: evaluating a module for `require`: handler registrations are skipped.
     module_eval: u32,
     entry: Option<EntryCtx>,
+    /// Nesting of conditions followed through variables (`local ok = ...`).
+    condition_depth: u32,
     budget: usize,
     pending: Vec<Pending<'a>>,
     analysed_entries: HashSet<(usize, usize, usize, usize)>,
@@ -190,6 +192,7 @@ impl<'a> Analyzer<'a> {
             peek: 0,
             module_eval: 0,
             entry: None,
+            condition_depth: 0,
             budget: ENTRY_BUDGET,
             pending: Vec::new(),
             analysed_entries: HashSet::new(),

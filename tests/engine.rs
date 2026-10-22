@@ -506,3 +506,34 @@ end)
         ["s.server.luau:12:luau-shield001"]
     );
 }
+
+#[test]
+fn conditions_stored_in_variables() {
+    let code = r#"
+local Remotes = game:GetService("ReplicatedStorage").Remotes
+local function isValidAmount(n: unknown): boolean
+	return typeof(n) == "number" and n == n and n >= 1 and n <= 50
+end
+Remotes.A.OnServerEvent:Connect(function(player, amount)
+	local ok = isValidAmount(amount)
+	if not ok then return end
+	player.leaderstats.Coins.Value += amount
+end)
+Remotes.B.OnServerEvent:Connect(function(player, amount)
+	local valid = typeof(amount) == "number" and amount == amount and amount > 0 and amount < 10
+	if valid then
+		player.leaderstats.Coins.Value += amount
+	end
+end)
+Remotes.C.OnServerEvent:Connect(function(player, amount)
+	local valid = typeof(amount) == "number"
+	if valid then
+		player.leaderstats.Coins.Value += amount
+	end
+end)
+"#;
+    assert_eq!(
+        run(&[("s.server.luau", code)]),
+        ["s.server.luau:21:luau-shield001"]
+    );
+}

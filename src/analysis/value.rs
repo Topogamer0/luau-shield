@@ -6,7 +6,7 @@
 //! be contained in the value. A value without flows is trusted.
 
 use crate::finding::Loc;
-use full_moon::ast::FunctionBody;
+use full_moon::ast::{Expression, FunctionBody};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
@@ -420,6 +420,9 @@ pub struct Value<'a> {
     /// The value was looked up in a server collection with an untrusted key:
     /// proving it is non-nil allow-lists that key.
     pub witness: Option<Target>,
+    /// The boolean condition this value was computed from
+    /// (`local ok = isValid(x)`): testing the value tests the condition.
+    pub condition: Option<&'a Expression>,
 }
 
 impl<'a> Value<'a> {
@@ -577,6 +580,10 @@ impl<'a> Value<'a> {
                 self.witness.clone()
             } else {
                 None
+            },
+            condition: match (self.condition, other.condition) {
+                (Some(a), Some(b)) if std::ptr::eq(a, b) => Some(a),
+                _ => None,
             },
         }
     }

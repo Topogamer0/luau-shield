@@ -972,6 +972,10 @@ impl<'a> Analyzer<'a> {
         if returns.is_empty() {
             returns.push(Value::nil());
         }
+        // Conditions refer to the callee's variables: they mean nothing here.
+        for value in &mut returns {
+            value.condition = None;
+        }
         (returns, frame.summary.take())
     }
 

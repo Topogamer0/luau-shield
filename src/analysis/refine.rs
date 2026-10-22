@@ -4,11 +4,12 @@ use super::calls::looks_like_validator;
 use super::interp::{
     args_exprs, is_condition, is_falsy_literal, string_literal, symbol_of, unwrap_expr,
 };
-use super::state::{Facts, Frame, Refinement, State};
+use super::state::{Expect, Facts, Frame, Lit, Refinement, State};
 use super::value::{Builtin, Checks, Func, Kind, SourceKind, Target, Value, check};
 use super::{Analyzer, token_name};
 use full_moon::ast::{BinOp, Call, Expression, FunctionCall, Index, Prefix, Suffix, UnOp, Var};
 use full_moon::tokenizer::{Symbol, TokenReference};
+use std::rc::Rc;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Cmp {
@@ -80,6 +81,51 @@ fn is_verified(value: &Value<'_>) -> bool {
 /// A Lua pattern anchored at both ends (`^%w+$`).
 fn anchored(pattern: &str) -> bool {
     pattern.starts_with('^') && pattern.ends_with('$') && !pattern.ends_with("%$")
+}
+
+/// A literal compared with a state expression (`"Playing"`, `3`, `true`, `nil`).
+fn literal_of(expr: &Expression) -> Option<Lit> {
+    match unwrap_expr(expr) {
+        Expression::String(token) => string_literal(token).map(|s| Lit::Str(Rc::from(&*s))),
+        Expression::Number(token) => super::interp::number_literal(&token.token().to_string())
+            .map(|n| Lit::Num(Rc::from(n.to_string().as_str()))),
+        Expression::Symbol(token) => match symbol_of(token) {
+            Some(Symbol::True) => Some(Lit::Bool(true)),
+            Some(Symbol::False) => Some(Lit::Bool(false)),
+            Some(Symbol::Nil) => Some(Lit::Nil),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The state a call reads, named like the writes that change it:
+/// `recv@Attr` for `recv:GetAttribute("Attr")`, `list@find` for
+/// `table.find(list, x)`.
+fn state_call_text(call: &FunctionCall) -> Option<String> {
+    let (prefix, init, last) = split_call(call)?;
+    match last {
+        Call::MethodCall(method) if token_name(method.name()) == "GetAttribute" => {
+            let attr = args_exprs(method.args())
+                .first()
+                .and_then(|e| string_const(e))?;
+            let mut recv = super::compact(prefix);
+            for s in &init {
+                recv.push_str(&super::compact(*s));
+            }
+            Some(format!("{recv}@{attr}"))
+        }
+        Call::AnonymousCall(args) => {
+            let is_find = matches!(prefix, Prefix::Name(t) if token_name(t) == "table")
+                && matches!(init.as_slice(), [Suffix::Index(Index::Dot { name, .. })] if token_name(name) == "find");
+            if !is_find {
+                return None;
+            }
+            let list = args_exprs(args).into_iter().next()?;
+            Some(format!("{}@find", super::compact(unwrap_expr(list))))
+        }
+        _ => None,
+    }
 }
 
 fn is_nil(expr: &Expression) -> bool {
@@ -215,6 +261,9 @@ impl<'a> Analyzer<'a> {
     }
 
     pub(crate) fn apply_facts(&self, state: &mut State<'a>, facts: &Facts) {
+        for (text, expect) in &facts.expects {
+            state.expects.insert(text.clone(), expect.clone());
+        }
         for (target, checks) in &facts.map {
             state.add_checks(target, *checks);
             // Verifying an Instance also verifies what was read from it
@@ -614,14 +663,14 @@ impl<'a> Analyzer<'a> {
         }
         // luau-shield007 lock pattern: `if busy[player] then return end`,
         // `if debounce then return end`, `if not tool.Enabled then return end`.
+        let mut on_false = Facts::default();
         if self.entry.is_some() {
-            self.pending_lock_reads
-                .push(super::compact(unwrap_expr(expr)));
+            let text = super::compact(unwrap_expr(expr));
+            on_true = on_true.union(&Facts::expect(text.as_str(), Expect::Truthy));
+            on_false = Facts::expect(text.as_str(), Expect::Falsy);
+            self.pending_lock_reads.push(text);
         }
-        Refinement {
-            on_true,
-            on_false: Facts::default(),
-        }
+        Refinement { on_true, on_false }
     }
 
     fn refine_compare(
@@ -632,9 +681,30 @@ impl<'a> Analyzer<'a> {
         cmp: Cmp,
         rhs: &'a Expression,
     ) -> Refinement {
-        let r = self.refine_compare_values(frame, state, lhs, cmp, rhs);
+        let mut r = self.refine_compare_values(frame, state, lhs, cmp, rhs);
         if !matches!(cmp, Cmp::Eq | Cmp::Ne) {
             return r;
+        }
+        // luau-shield007 state machines: `if state[player] ~= "Playing" then
+        // return end` proves `state[player] == "Playing"` after the test.
+        if self.entry.is_some() {
+            let (subject, literal) = match (literal_of(lhs), literal_of(rhs)) {
+                (None, Some(lit)) => (lhs, Some(lit)),
+                (Some(lit), None) => (rhs, Some(lit)),
+                _ => (lhs, None),
+            };
+            if let (Some(lit), Expression::Var(_)) = (literal, unwrap_expr(subject)) {
+                let text = super::compact(unwrap_expr(subject));
+                let equal = Facts::expect(text.as_str(), Expect::Eq(lit.clone()));
+                let different = Facts::expect(text.as_str(), Expect::Ne(lit));
+                let (yes, no) = if cmp == Cmp::Eq {
+                    (equal, different)
+                } else {
+                    (different, equal)
+                };
+                r.on_true = r.on_true.union(&yes);
+                r.on_false = r.on_false.union(&no);
+            }
         }
         let bool_literal = |e: &Expression| match unwrap_expr(e) {
             Expression::Symbol(t) => match symbol_of(t) {
@@ -947,6 +1017,85 @@ impl<'a> Analyzer<'a> {
     }
 
     fn refine_call(
+        &mut self,
+        frame: &mut Frame<'a>,
+        state: &mut State<'a>,
+        call: &'a FunctionCall,
+    ) -> Refinement {
+        let guard = self.guard_facts(frame, state, call);
+        let r = self.refine_call_checks(frame, state, call);
+        let mut on_true = r.on_true.union(&guard);
+        let mut on_false = r.on_false;
+        // luau-shield007 state kept in an attribute or a list:
+        // `if player:GetAttribute("Busy") then`, `if table.find(busy, player) then`.
+        if let (Some(text), true) = (state_call_text(call), self.entry.is_some()) {
+            on_true = on_true.union(&Facts::expect(text.as_str(), Expect::Truthy));
+            on_false = on_false.union(&Facts::expect(text.as_str(), Expect::Falsy));
+        }
+        Refinement { on_true, on_false }
+    }
+
+    /// `if not Admins.isAdmin(player) then return end`: a permission guard
+    /// (see `Config::is_guard`) called on the player who sent the request.
+    /// Where it succeeded, every untrusted value is `PRIVILEGED`: findings on
+    /// them are downgraded to `info` ("admin only").
+    fn guard_facts(
+        &mut self,
+        frame: &mut Frame<'a>,
+        state: &mut State<'a>,
+        call: &'a FunctionCall,
+    ) -> Facts {
+        let mut facts = Facts::default();
+        let Some((prefix, init, last)) = split_call(call) else {
+            return facts;
+        };
+        let mut path: Vec<String> = Vec::new();
+        if let Prefix::Name(t) = prefix {
+            path.push(token_name(t));
+        }
+        for s in &init {
+            if let Suffix::Index(Index::Dot { name, .. }) = s {
+                path.push(token_name(name));
+            }
+        }
+        let args = match last {
+            Call::MethodCall(method) => {
+                path.push(token_name(method.name()));
+                args_exprs(method.args())
+            }
+            Call::AnonymousCall(args) => args_exprs(args),
+            _ => return facts,
+        };
+        if path.is_empty() || !self.config.is_guard(&path) {
+            return facts;
+        }
+        // The guard must test the sender (`player`, `player.UserId`), not a
+        // player or id chosen by the client. Other arguments must be
+        // constants (`hasPermission(player, "Ban")`): `isOwner(player, plot)`
+        // checks who owns a plot, not who the player is.
+        let values: Vec<Value<'a>> = args.iter().map(|e| self.peek(frame, state, e)).collect();
+        let on_sender = values.iter().any(|v| v.player_rel && !v.is_tainted());
+        let only_constants = values.iter().all(|v| {
+            !v.is_tainted()
+                && (v.player_rel
+                    || matches!(
+                        v.kind,
+                        Kind::Str(Some(_)) | Kind::Number(Some(_)) | Kind::Bool(Some(_))
+                    ))
+        });
+        if !on_sender || !only_constants {
+            return facts;
+        }
+        self.guard = Some(super::compact(call));
+        for (id, value) in &state.vars {
+            if !value.deep_flows().is_empty() {
+                facts.add(Target::Var(*id), check::PRIVILEGED);
+            }
+        }
+        facts
+    }
+
+    fn refine_call_checks(
         &mut self,
         frame: &mut Frame<'a>,
         state: &mut State<'a>,

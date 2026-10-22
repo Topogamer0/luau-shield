@@ -480,7 +480,7 @@ low[luau-shield007]: Remote handler does expensive work without a rate limit
    |
 34 | -- the player clicked; this saves a catalog lookup on the server.
 35 | Remotes.BuyItem.OnServerEvent:Connect(function(player: Player, itemId: string, price: number)
-   |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Remotes.BuyItem.OnServerEvent` handler calls `template:Clone()` on every request, with no rate limit
+   |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Remotes.BuyItem.OnServerEvent` handler calls `template:Clone()` when a condition in `giveTool` holds, with no rate limit: check that a client cannot make it hold on every request
    |
    = why: Exploiters can fire a remote thousands of times per second. Without a limit, each call
            spends DataStore/HTTP budgets, creates instances or yields, which is enough to lag or

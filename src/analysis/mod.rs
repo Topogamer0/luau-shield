@@ -9,11 +9,11 @@ pub mod value;
 use crate::config::Config;
 use crate::finding::{Finding, FlowStep, Loc, Span};
 use crate::project::{Project, RunContext, ScriptKind};
-use crate::rules::RuleId;
+use crate::rules::{RuleId, Severity};
 use full_moon::ast::{FunctionBody, Parameter};
 use full_moon::node::Node;
 use full_moon::tokenizer::TokenReference;
-use state::{Frame, State, Summary};
+use state::{Frame, ReturnSummary, State, Summary};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use value::{Closure, Flow, Func, Kind, ObjClass, Source, SourceKind, Value, VarId};
@@ -113,10 +113,22 @@ pub(crate) struct Pending<'a> {
     rate_limited: bool,
 }
 
+/// Expensive work done by a remote handler (luau-shield007).
+pub(crate) struct Expensive {
+    what: String,
+    /// The work only runs after the handler changed a state it tested (see
+    /// `State::consumed`): `Some(true)` per player, `Some(false)` global.
+    consumed: Option<bool>,
+    /// Inside an `if` branch.
+    conditional: bool,
+    /// The function doing it, when it is not the handler itself.
+    function: Option<Rc<str>>,
+}
+
 /// Per-handler bookkeeping for luau-shield007.
 #[derive(Default)]
 pub(crate) struct EntryCtx {
-    expensive: Vec<String>,
+    expensive: Vec<Expensive>,
     rate_limited: bool,
     lock_reads: HashSet<String>,
     lock_writes: HashSet<String>,
@@ -137,6 +149,9 @@ struct RawFinding {
     message: String,
     flow: Option<Flow>,
     detail: Option<String>,
+    /// The sink is only reached after this permission guard succeeded: the
+    /// finding is downgraded to `info`.
+    guarded_by: Option<String>,
 }
 
 pub struct Analyzer<'a> {
@@ -151,6 +166,10 @@ pub struct Analyzer<'a> {
     required: HashMap<usize, std::collections::BTreeSet<usize>>,
     statics: HashMap<usize, Rc<HashMap<VarId, Value<'a>>>>,
     summaries: HashMap<(usize, usize), Option<Rc<Summary>>>,
+    /// Return summaries of functions too deep to follow (`None` while computed).
+    return_summaries: HashMap<(usize, usize), Option<Rc<ReturnSummary<'a>>>>,
+    /// Nesting of return summary computations.
+    summary_nesting: u32,
     next_source: u32,
     next_frame: u32,
     stack: Vec<(usize, usize)>,
@@ -165,6 +184,11 @@ pub struct Analyzer<'a> {
     condition_depth: u32,
     /// `T[player]` tests seen while refining the current `if` condition.
     pending_lock_reads: Vec<String>,
+    /// Nesting of `if` branches being executed (luau-shield007 messages).
+    branch_depth: u32,
+    /// The last permission guard (`Admins.isAdmin(player)`) seen in the
+    /// current entry point, named in downgraded findings.
+    guard: Option<String>,
     budget: usize,
     pending: Vec<Pending<'a>>,
     analysed_entries: HashSet<(usize, usize, usize, usize)>,
@@ -200,6 +224,8 @@ impl<'a> Analyzer<'a> {
             required: HashMap::new(),
             statics: HashMap::new(),
             summaries: HashMap::new(),
+            return_summaries: HashMap::new(),
+            summary_nesting: 0,
             next_source: 1,
             next_frame: 1,
             stack: Vec::new(),
@@ -209,6 +235,8 @@ impl<'a> Analyzer<'a> {
             entry: None,
             condition_depth: 0,
             pending_lock_reads: Vec::new(),
+            branch_depth: 0,
+            guard: None,
             budget: ENTRY_BUDGET,
             pending: Vec::new(),
             analysed_entries: HashSet::new(),
@@ -418,6 +446,7 @@ impl<'a> Analyzer<'a> {
                 });
             }
             self.budget = ENTRY_BUDGET;
+            self.guard = None;
             let mut state = base.clone();
             let (args, rest) = args;
             self.call_closure(
@@ -436,32 +465,49 @@ impl<'a> Analyzer<'a> {
                 let locked = ctx.lock_reads.iter().any(|t| {
                     ctx.per_player_writes.contains(t) || (ctx.waits && ctx.lock_writes.contains(t))
                 });
-                if !ctx.expensive.is_empty() && !ctx.rate_limited && !locked {
+                // Work behind a state the handler consumed (`if state[player]
+                // ~= "Playing" then return end; state[player] = "Menu"`)
+                // cannot repeat; a global state only limits when the handler
+                // also waits before restoring it.
+                let unprotected: Vec<&Expensive> = ctx
+                    .expensive
+                    .iter()
+                    .filter(|e| match e.consumed {
+                        Some(true) => false,
+                        Some(false) => !ctx.waits,
+                        None => true,
+                    })
+                    .collect();
+                if !unprotected.is_empty() && !ctx.rate_limited && !locked {
                     let EntryKind::Remote { event, remote } = &pending.kind else {
                         unreachable!()
                     };
-                    let mut ops: Vec<String> = Vec::new();
-                    for op in ctx.expensive {
-                        if !ops.contains(&op) {
-                            ops.push(op);
+                    let mut ops: Vec<&str> = Vec::new();
+                    for op in &unprotected {
+                        if !ops.contains(&op.what.as_str()) {
+                            ops.push(&op.what);
                         }
                     }
-                    let shown: Vec<&str> = ops.iter().take(3).map(String::as_str).collect();
+                    let shown = ops.iter().take(3).copied().collect::<Vec<_>>().join(", ");
                     let more = if ops.len() > 3 {
                         format!(" and {} more", ops.len() - 3)
                     } else {
                         String::new()
                     };
-                    self.report(
-                        RuleId::Ls007,
-                        pending.registration,
+                    let message = if unprotected.iter().all(|e| e.conditional) {
+                        let place = match unprotected.iter().find_map(|e| e.function.clone()) {
+                            Some(f) => format!(" in `{f}`"),
+                            None => String::new(),
+                        };
                         format!(
-                            "the `{remote}.{event}` handler calls {}{more} on every request, with no rate limit",
-                            shown.join(", ")
-                        ),
-                        None,
-                        None,
-                    );
+                            "the `{remote}.{event}` handler calls {shown}{more} when a condition{place} holds, with no rate limit: check that a client cannot make it hold on every request"
+                        )
+                    } else {
+                        format!(
+                            "the `{remote}.{event}` handler calls {shown}{more} on every request, with no rate limit"
+                        )
+                    };
+                    self.report(RuleId::Ls007, pending.registration, message, None, None);
                 }
             }
         }
@@ -602,6 +648,32 @@ impl<'a> Analyzer<'a> {
         flow: Option<&Flow>,
         detail: Option<String>,
     ) {
+        self.push_finding(rule, loc, message, flow, detail, None);
+    }
+
+    /// Reports a finding that is only reachable after the permission guard
+    /// `guard` succeeded (severity `info`).
+    pub(crate) fn report_downgraded(
+        &mut self,
+        rule: RuleId,
+        loc: Loc,
+        message: String,
+        flow: Option<&Flow>,
+        detail: Option<String>,
+        guard: String,
+    ) {
+        self.push_finding(rule, loc, message, flow, detail, Some(guard));
+    }
+
+    fn push_finding(
+        &mut self,
+        rule: RuleId,
+        loc: Loc,
+        message: String,
+        flow: Option<&Flow>,
+        detail: Option<String>,
+        guarded_by: Option<String>,
+    ) {
         if self.quiet > 0 || self.peek > 0 || !self.config.rule_enabled(rule) {
             return;
         }
@@ -609,6 +681,20 @@ impl<'a> Analyzer<'a> {
             return;
         }
         let key = (rule, loc.file, loc.span.line, loc.span.column);
+        // The same sink reached without the guard (from another handler, or
+        // another path) replaces the downgraded finding.
+        if guarded_by.is_none() && self.reported.contains(&key) {
+            if let Some(existing) = self.raw.iter_mut().find(|r| {
+                r.guarded_by.is_some()
+                    && (r.rule, r.loc.file, r.loc.span.line, r.loc.span.column) == key
+            }) {
+                existing.message = message;
+                existing.flow = flow.cloned();
+                existing.detail = detail;
+                existing.guarded_by = None;
+                return;
+            }
+        }
         if rule == RuleId::Ls003 {
             if let Some(flow) = flow {
                 if !self.ls003_sources.insert(flow.source.id) {
@@ -631,6 +717,7 @@ impl<'a> Analyzer<'a> {
             message,
             flow: flow.cloned(),
             detail,
+            guarded_by,
         });
     }
 
@@ -678,17 +765,31 @@ impl<'a> Analyzer<'a> {
             }
         }
         flow_steps.push(self.step(raw.loc, raw.message.clone()));
-        let fix = match &raw.detail {
+        let mut fix = match &raw.detail {
             Some(detail) => format!("{detail} {}", meta.fix),
             None => meta.fix.to_string(),
         };
+        let mut message = raw.message.clone();
+        let mut severity = self.config.severity_of(raw.rule);
+        if let Some(guard) = &raw.guarded_by {
+            severity = Severity::Info;
+            message.push_str(&format!(" (admin only: after `{guard}`)"));
+            why = format!(
+                "This code only runs for players that pass `{guard}`, so an exploiter \
+                 cannot reach it unless that check is wrong. {why}"
+            );
+            fix = format!(
+                "Admin-only code: the value is still unchecked, so a typo or a \
+                 compromised admin account can corrupt data. {fix}"
+            );
+        }
         Finding {
             rule: raw.rule,
-            severity: self.config.severity_of(raw.rule),
+            severity,
             title: meta.title.to_string(),
             file: self.project.files[raw.loc.file].rel.clone(),
             span: raw.loc.span,
-            message: raw.message.clone(),
+            message,
             snippet: String::new(),
             flow: flow_steps,
             why,

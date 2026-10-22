@@ -40,8 +40,14 @@ pub mod check {
         TYPE_NUMBER | TYPE_STRING | TYPE_BOOLEAN | TYPE_INSTANCE | TYPE_TABLE | TYPE_OTHER;
     pub const BOUNDS: Checks = LOWER | UPPER;
     pub const ALL: Checks = (1 << 16) - 1;
+    /// Not a check of the value: the code only runs for players who passed a
+    /// permission guard (`if not Admins.isAdmin(player) then return end`).
+    /// Findings on such values are downgraded to `info`.
+    pub const PRIVILEGED: Checks = 1 << 16;
     /// Facts that survive reading a field of a checked value.
-    pub const INHERITED_BY_FIELDS: Checks = VALIDATED | OWNERSHIP | ALLOWLIST;
+    pub const INHERITED_BY_FIELDS: Checks = VALIDATED | OWNERSHIP | ALLOWLIST | PRIVILEGED;
+    /// Facts that survive any transformation of the value.
+    pub const KEPT: Checks = VALIDATED | ALLOWLIST | PRIVILEGED;
     /// Facts that make every rule happy.
     pub const TRUSTED: Checks = VALIDATED | ALLOWLIST;
 }
@@ -156,6 +162,19 @@ pub struct Flow {
     /// The value was read from an Instance chosen by the client (server data,
     /// but the client decides which object it comes from).
     pub instance_data: bool,
+    /// The last function named like a sanitizer (`Look.sanitize`) that
+    /// returned this value: findings suggest declaring it in the configuration.
+    pub via: Option<Rc<Via>>,
+}
+
+/// A sanitizer-like function a value went through.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Via {
+    /// How the function was called (`Look.sanitize`).
+    pub name: Rc<str>,
+    /// luau-shield analysed its body (otherwise it could not be resolved or
+    /// was too deep to follow).
+    pub analysed: bool,
 }
 
 impl Flow {
@@ -166,6 +185,7 @@ impl Flow {
             checks: 0,
             raw: true,
             instance_data: false,
+            via: None,
         }
     }
 
@@ -554,6 +574,53 @@ impl<'a> Value<'a> {
     pub fn add_checks(&mut self, checks: Checks) {
         for flow in &mut self.flows {
             flow.checks |= checks;
+        }
+    }
+
+    /// Records that the value (and everything stored in it) was returned by
+    /// the sanitizer-like function `via`.
+    pub fn set_via_deep(&mut self, via: &Rc<Via>) {
+        self.set_via_at(via, 0);
+    }
+
+    fn set_via_at(&mut self, via: &Rc<Via>, depth: usize) {
+        for flow in &mut self.flows {
+            flow.via = Some(via.clone());
+        }
+        if depth > 6 {
+            return;
+        }
+        if let Kind::Table(table) = &self.kind {
+            let mut table = (**table).clone();
+            for value in table.fields.values_mut() {
+                value.set_via_at(via, depth + 1);
+            }
+            if let Some(dynamic) = table.dynamic.as_mut() {
+                dynamic.set_via_at(via, depth + 1);
+            }
+            self.kind = Kind::Table(Rc::new(table));
+        }
+    }
+
+    /// Adds `checks` to the value and to everything stored in it.
+    pub fn add_checks_deep(&mut self, checks: Checks) {
+        self.add_checks_at(checks, 0);
+    }
+
+    fn add_checks_at(&mut self, checks: Checks, depth: usize) {
+        self.add_checks(checks);
+        if depth > 6 {
+            return;
+        }
+        if let Kind::Table(table) = &self.kind {
+            let mut table = (**table).clone();
+            for value in table.fields.values_mut() {
+                value.add_checks_at(checks, depth + 1);
+            }
+            if let Some(dynamic) = table.dynamic.as_mut() {
+                dynamic.add_checks_at(checks, depth + 1);
+            }
+            self.kind = Kind::Table(Rc::new(table));
         }
     }
 

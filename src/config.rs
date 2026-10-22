@@ -30,7 +30,17 @@ struct RawConfig {
     #[serde(default)]
     sources: Vec<RawSource>,
     #[serde(default)]
+    guards: RawGuards,
+    #[serde(default)]
     explain: RawExplain,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct RawGuards {
+    #[serde(default)]
+    functions: Vec<String>,
+    defaults: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -106,7 +116,40 @@ impl NamePattern {
                 .zip(path)
                 .all(|(pattern, name)| pattern == "*" || pattern == name)
     }
+
+    /// Like `matches`, but a single name (`isAdmin`) also matches the last
+    /// segment of a longer path (`Admins.isAdmin`, `self:isAdmin`).
+    pub fn matches_name(&self, path: &[String]) -> bool {
+        match (self.segments.as_slice(), path.last()) {
+            ([single], Some(last)) => single == last,
+            _ => self.matches(path),
+        }
+    }
 }
+
+/// Function names that are permission checks by default: `isAdmin`,
+/// `Permissions:hasPermission(player, ...)`, `is_owner`... Compared without
+/// case and underscores.
+const DEFAULT_GUARDS: &[&str] = &[
+    "isadmin",
+    "issuperadmin",
+    "isheadadmin",
+    "isowner",
+    "isgameowner",
+    "iscreator",
+    "ismoderator",
+    "ismod",
+    "isstaff",
+    "isdeveloper",
+    "isdev",
+    "hasadmin",
+    "hasadminrights",
+    "hasadminaccess",
+    "hasadminpermission",
+    "hasadminpermissions",
+    "haspermission",
+    "haspermissions",
+];
 
 #[derive(Clone, Debug)]
 pub struct Sanitizer {
@@ -151,6 +194,10 @@ pub struct Config {
     pub sanitizers: Vec<Sanitizer>,
     pub sinks: Vec<CustomSink>,
     pub sources: Vec<CustomSource>,
+    /// Permission checks configured in `[guards] functions`.
+    pub guards: Vec<NamePattern>,
+    /// Also trust the built-in guard names (`isAdmin`, `hasPermission`...).
+    pub default_guards: bool,
     pub explain_model: String,
     pub explain_timeout_seconds: u64,
     /// Where the configuration was loaded from, if anywhere.
@@ -187,6 +234,8 @@ impl Default for Config {
                 pattern: NamePattern::new("*.Client.*"),
                 trusted_parameters: 1,
             }],
+            guards: Vec::new(),
+            default_guards: true,
             explain_model: "qwen2.5-coder:7b".to_string(),
             explain_timeout_seconds: 60,
             source_file: None,
@@ -205,6 +254,18 @@ pub fn parse_fail_on(text: &str) -> Result<Option<Severity>, String> {
 }
 
 impl Config {
+    /// Is the function at `path` (`Admins.isAdmin`) a permission check?
+    pub fn is_guard(&self, path: &[String]) -> bool {
+        if self.guards.iter().any(|g| g.matches_name(path)) {
+            return true;
+        }
+        self.default_guards
+            && path.last().is_some_and(|name| {
+                let name = name.to_ascii_lowercase().replace('_', "");
+                DEFAULT_GUARDS.contains(&name.as_str())
+            })
+    }
+
     /// Finds `luau-shield.toml` in `start` (or its directory) or any ancestor.
     pub fn discover(start: &Path) -> Option<PathBuf> {
         let start = if start.is_file() {
@@ -305,6 +366,15 @@ impl Config {
                     }
                 }
             }
+        }
+        config.guards = raw
+            .guards
+            .functions
+            .iter()
+            .map(|f| NamePattern::new(f))
+            .collect();
+        if let Some(defaults) = raw.guards.defaults {
+            config.default_guards = defaults;
         }
         for sanitizer in raw.sanitizers {
             let checks = match sanitizer.checks {

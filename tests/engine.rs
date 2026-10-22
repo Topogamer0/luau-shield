@@ -706,3 +706,131 @@ end)
         ["attr.server.luau:7:luau-shield001"]
     );
 }
+
+/// Runs luau-shield on `files` and returns the report.
+fn report_with(files: &[(&str, &str)], config: &Config) -> luau_shield::Report {
+    let dir = tempfile::tempdir().unwrap();
+    for (path, content) in files {
+        let full = dir.path().join(path);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(full, content).unwrap();
+    }
+    luau_shield::check(&[dir.path().to_path_buf()], config).unwrap()
+}
+
+#[test]
+fn admin_guards_downgrade_to_info() {
+    let code = r#"local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
+local Admins = require(ServerScriptService.Admins)
+local data = {}
+
+ReplicatedStorage.Remotes.SetCoins.OnServerEvent:Connect(function(player, coins)
+	if not Admins.isAdmin(player) then
+		return
+	end
+	data[player].Coins = coins
+end)
+
+ReplicatedStorage.Remotes.SetGems.OnServerEvent:Connect(function(player, gems)
+	data[player].Gems = gems
+end)
+"#;
+    let config = Config {
+        min_severity: luau_shield::rules::Severity::Info,
+        ..Config::default()
+    };
+    let report = report_with(&[("admin.server.luau", code)], &config);
+    let found: Vec<String> = report
+        .findings
+        .iter()
+        .map(|f| format!("{}:{}:{}", f.span.line, f.rule, f.severity))
+        .collect();
+    assert_eq!(
+        found,
+        ["10:luau-shield001:info", "14:luau-shield001:high"],
+        "{:#?}",
+        report.findings
+    );
+    assert!(report.findings[0].message.contains("admin only"));
+    // At the default threshold only the unguarded write is reported.
+    assert_eq!(
+        run(&[("admin.server.luau", code)]),
+        ["admin.server.luau:14:luau-shield001"]
+    );
+    // `[guards] defaults = false` turns the built-in names off.
+    let config = Config::from_toml("[guards]\ndefaults = false\n", Path::new(".")).unwrap();
+    assert_eq!(
+        run_with(&[("admin.server.luau", code)], &config),
+        [
+            "admin.server.luau:10:luau-shield001",
+            "admin.server.luau:14:luau-shield001"
+        ]
+    );
+    // A configured guard works like the built-in ones.
+    let custom = code.replace("Admins.isAdmin(player)", "Staff.canModerate(player)");
+    let config = Config::from_toml(
+        "[guards]\nfunctions = [\"Staff.canModerate\"]\n",
+        Path::new("."),
+    )
+    .unwrap();
+    assert_eq!(
+        run_with(&[("admin.server.luau", &custom)], &config),
+        ["admin.server.luau:14:luau-shield001"]
+    );
+}
+
+#[test]
+fn unresolved_sanitizers_are_named_in_the_fix() {
+    let code = r#"local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Look = require(ReplicatedStorage.Packages.Look)
+local saves = {}
+ReplicatedStorage.Remotes.SetLook.OnServerEvent:Connect(function(player, raw)
+	saves[player].Look = Look.sanitize(raw)
+end)
+"#;
+    let report = report_with(&[("look.server.luau", code)], &Config::default());
+    assert_eq!(report.findings.len(), 1);
+    let fix = &report.findings[0].fix;
+    assert!(
+        fix.contains("`Look.sanitize`") && fix.contains("[[sanitizers]]"),
+        "{fix}"
+    );
+    // Declared as a sanitizer, it is trusted.
+    let config = Config::from_toml(
+        "[[sanitizers]]\nfunction = \"Look.sanitize\"\n",
+        Path::new("."),
+    )
+    .unwrap();
+    assert!(run_with(&[("look.server.luau", code)], &config).is_empty());
+}
+
+#[test]
+fn conditional_expensive_work_is_described() {
+    let code = r#"local DataStoreService = game:GetService("DataStoreService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local store = DataStoreService:GetDataStore("Saves")
+local data = {}
+local function saveSlot(p, s)
+	if data[p].Slots[s] then
+		store:SetAsync(tostring(p.UserId), data[p])
+	end
+end
+ReplicatedStorage.Remotes.SaveSlot.OnServerEvent:Connect(function(player, slot)
+	saveSlot(player, slot)
+end)
+"#;
+    let report = report_with(&[("slots.server.luau", code)], &Config::default());
+    let messages: Vec<&str> = report
+        .findings
+        .iter()
+        .filter(|f| f.rule.code() == "luau-shield007")
+        .map(|f| f.message.as_str())
+        .collect();
+    assert_eq!(messages.len(), 1);
+    assert!(
+        messages[0].contains("when a condition in `saveSlot` holds"),
+        "{}",
+        messages[0]
+    );
+}

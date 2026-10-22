@@ -1,6 +1,6 @@
 //! Abstract program state (variables and refinements) and activation frames.
 
-use super::value::{Checks, Closure, Scope, Target, Value, VarId};
+use super::value::{Checks, Closure, Scope, Target, Value, VarId, check};
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
@@ -12,6 +12,52 @@ pub struct State<'a> {
     pub path_facts: HashMap<(VarId, Rc<str>), Checks>,
     /// No normal execution reaches this point (after return/error/break).
     pub dead: bool,
+    /// luau-shield007: what the conditions on this path proved about state
+    /// expressions (`state[player] == "Playing"`, `busy[player]` is falsy),
+    /// keyed by the expression text.
+    pub expects: BTreeMap<Rc<str>, Expect>,
+    /// luau-shield007: a state expression tested on this path was then
+    /// changed so that the same test fails next time (`if state[player] ~=
+    /// "Playing" then return end; state[player] = "Menu"`): the request
+    /// cannot repeat the work that follows. `Some(true)` when the state is
+    /// per player, `Some(false)` for a global flag.
+    pub consumed: Option<bool>,
+}
+
+/// A literal a state expression is compared with.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Lit {
+    Nil,
+    Bool(bool),
+    /// Numbers are kept as text so that facts stay comparable.
+    Num(Rc<str>),
+    Str(Rc<str>),
+}
+
+/// What a condition proved about a state expression on one path.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Expect {
+    Truthy,
+    Falsy,
+    Eq(Lit),
+    Ne(Lit),
+}
+
+impl Expect {
+    /// Does writing `value` (a literal, or `None` when unknown) make the
+    /// condition that proved `self` fail from now on?
+    pub fn violated_by(&self, value: Option<&Lit>, truthy: Option<bool>) -> bool {
+        match self {
+            Expect::Truthy => truthy == Some(false),
+            Expect::Falsy => truthy == Some(true),
+            Expect::Eq(lit) => match value {
+                Some(v) => v != lit,
+                // Any truthy value differs from nil/false.
+                None => matches!(lit, Lit::Nil | Lit::Bool(false)) && truthy == Some(true),
+            },
+            Expect::Ne(lit) => value == Some(lit),
+        }
+    }
 }
 
 impl<'a> State<'a> {
@@ -48,10 +94,21 @@ impl<'a> State<'a> {
                 }
             }
         }
+        let expects = self
+            .expects
+            .into_iter()
+            .filter(|(k, e)| other.expects.get(k) == Some(e))
+            .collect();
+        let consumed = match (self.consumed, other.consumed) {
+            (Some(a), Some(b)) => Some(a && b),
+            _ => None,
+        };
         State {
             vars,
             path_facts,
             dead: false,
+            expects,
+            consumed,
         }
     }
 
@@ -69,7 +126,11 @@ impl<'a> State<'a> {
         match target {
             Target::Var(id) => {
                 if let Some(value) = self.vars.get_mut(id) {
-                    value.add_checks(checks);
+                    if checks & check::PRIVILEGED != 0 {
+                        value.add_checks_deep(checks);
+                    } else {
+                        value.add_checks(checks);
+                    }
                 }
             }
             Target::Path(id, path) => {
@@ -92,6 +153,8 @@ impl<'a> State<'a> {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Facts {
     pub map: BTreeMap<Target, Checks>,
+    /// luau-shield007: what holds about state expressions (see `State::expects`).
+    pub expects: BTreeMap<Rc<str>, Expect>,
 }
 
 impl Facts {
@@ -112,6 +175,9 @@ impl Facts {
         for (target, checks) in &other.map {
             self.add(target.clone(), *checks);
         }
+        for (text, expect) in &other.expects {
+            self.expects.insert(text.clone(), expect.clone());
+        }
         self
     }
 
@@ -123,7 +189,18 @@ impl Facts {
                 out.add(target.clone(), checks & theirs);
             }
         }
+        for (text, expect) in &self.expects {
+            if other.expects.get(text) == Some(expect) {
+                out.expects.insert(text.clone(), expect.clone());
+            }
+        }
         out
+    }
+
+    pub fn expect(text: impl Into<Rc<str>>, expect: Expect) -> Facts {
+        let mut facts = Facts::default();
+        facts.expects.insert(text.into(), expect);
+        facts
     }
 }
 
@@ -163,6 +240,14 @@ pub struct Summary {
     pub truthy: Vec<Checks>,
     /// Facts about each parameter whenever the function returns normally.
     pub exit: Vec<Checks>,
+}
+
+/// What a function returns, in terms of its parameters: the return values
+/// computed with one "probe" source per parameter.
+pub struct ReturnSummary<'a> {
+    /// The probe source of each argument position (`None` for `self`).
+    pub probes: Vec<Option<u32>>,
+    pub returns: Vec<Value<'a>>,
 }
 
 /// One function activation.

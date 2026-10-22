@@ -26,6 +26,7 @@ impl Palette {
             Severity::High => AnsiColor::Red,
             Severity::Medium => AnsiColor::Yellow,
             Severity::Low => AnsiColor::Cyan,
+            Severity::Info => AnsiColor::BrightBlack,
         };
         Style::new()
             .fg_color(Some(color.into()))

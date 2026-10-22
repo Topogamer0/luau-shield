@@ -237,6 +237,40 @@ pub(crate) fn is_falsy_literal(expr: &Expression) -> bool {
     }
 }
 
+/// Most fields of a table iterated one by one (see `exec_unrolled`).
+const MAX_UNROLLED_FIELDS: usize = 16;
+
+/// The fields of the iterated collection, when every key is known: a server
+/// table with named fields only (not an array, not filled with dynamic keys,
+/// not sent by the client). `ipairs` only visits array entries: not unrolled.
+fn known_fields<'a>(
+    collection: &Value<'a>,
+    exprs: &[&'a Expression],
+) -> Option<Vec<(Rc<str>, Value<'a>)>> {
+    let Kind::Table(table) = &collection.kind else {
+        return None;
+    };
+    let ipairs = exprs.first().is_some_and(|e| {
+        matches!(unwrap_expr(e), Expression::FunctionCall(call)
+            if matches!(call.prefix(), Prefix::Name(t) if token_name(t) == "ipairs"))
+    });
+    if ipairs
+        || collection.is_tainted()
+        || table.dynamic.is_some()
+        || table.fields.is_empty()
+        || table.fields.len() > MAX_UNROLLED_FIELDS
+    {
+        return None;
+    }
+    Some(
+        table
+            .fields
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    )
+}
+
 /// An expression whose value is the outcome of a check.
 pub(crate) fn is_condition(expr: &Expression) -> bool {
     match unwrap_expr(expr) {
@@ -550,7 +584,9 @@ impl<'a> Analyzer<'a> {
                     frame.scopes.push(BTreeMap::new());
                     self.declare_local(frame, &mut then_state, binding.name(), cond_value.clone());
                 }
+                self.branch_depth += 1;
                 let then_end = self.exec_block(frame, stmt.block(), then_state);
+                self.branch_depth -= 1;
                 if stmt.binding().is_some() {
                     frame.scopes.pop();
                 }
@@ -580,12 +616,19 @@ impl<'a> Analyzer<'a> {
                         let r = self.refine_condition(frame, &mut else_state, else_if.condition());
                         let mut branch = else_state.clone();
                         self.apply_facts(&mut branch, &r.on_true);
+                        self.branch_depth += 1;
                         ends.push(self.exec_block(frame, else_if.block(), branch));
+                        self.branch_depth -= 1;
                         self.apply_facts(&mut else_state, &r.on_false);
                     }
                 }
                 let else_end = match stmt.else_block() {
-                    Some(block) if !else_state.dead => self.exec_block(frame, block, else_state),
+                    Some(block) if !else_state.dead => {
+                        self.branch_depth += 1;
+                        let end = self.exec_block(frame, block, else_state);
+                        self.branch_depth -= 1;
+                        end
+                    }
                     _ => else_state,
                 };
                 ends.push(else_end);
@@ -646,18 +689,24 @@ impl<'a> Analyzer<'a> {
             }
             Stmt::GenericFor(stmt) => {
                 let exprs: Vec<&'a Expression> = stmt.expressions().iter().collect();
-                let (key, element) = self.iteration_values(frame, &mut state, &exprs);
+                let collection = self.iteration_collection(frame, &mut state, &exprs);
                 let names: Vec<&'a TokenReference> = stmt.names().iter().collect();
-                state = self.exec_loop(frame, state, None, stmt.block(), |this, frame, state| {
-                    for (i, name) in names.iter().enumerate() {
-                        let value = match i {
-                            0 => key.clone(),
-                            1 => element.clone(),
-                            _ => Value::unknown(),
-                        };
-                        this.declare_local(frame, state, name, value);
-                    }
-                });
+                if let Some(fields) = known_fields(&collection, &exprs) {
+                    state = self.exec_unrolled(frame, state, stmt.block(), &names, fields);
+                } else {
+                    let (key, element) = self.iteration_values(&collection);
+                    state =
+                        self.exec_loop(frame, state, None, stmt.block(), |this, frame, state| {
+                            for (i, name) in names.iter().enumerate() {
+                                let value = match i {
+                                    0 => key.clone(),
+                                    1 => element.clone(),
+                                    _ => Value::unknown(),
+                                };
+                                this.declare_local(frame, state, name, value);
+                            }
+                        });
+                }
             }
             _ => {}
         }
@@ -712,18 +761,18 @@ impl<'a> Analyzer<'a> {
         State::join_all(std::iter::once(exit).chain(ctx.breaks))
     }
 
-    /// Key and element values for `for k, v in <exprs>`.
-    fn iteration_values(
+    /// The collection iterated by `for k, v in <exprs>`.
+    fn iteration_collection(
         &mut self,
         frame: &mut Frame<'a>,
         state: &mut State<'a>,
         exprs: &[&'a Expression],
-    ) -> (Value<'a>, Value<'a>) {
+    ) -> Value<'a> {
         let values = self.eval_list(frame, state, exprs);
         let first = values.first().cloned().unwrap_or_default();
         // `pairs(t)` / `ipairs(t)` evaluate to the table itself (see builtins);
         // generalized iteration uses the table directly.
-        let collection = match &first.kind {
+        match &first.kind {
             Kind::Func(funcs)
                 if funcs
                     .iter()
@@ -732,8 +781,56 @@ impl<'a> Analyzer<'a> {
                 values.get(1).cloned().unwrap_or_default()
             }
             _ => first,
-        };
-        let element = self.element_of(&collection);
+        }
+    }
+
+    /// `for k, v in t` over a table whose keys are all known (a table built
+    /// by the server, such as `{ coins = amount }`): the body runs once per
+    /// field, with the field's own key and value, so that writing
+    /// `copy[k] = v` keeps each field apart.
+    fn exec_unrolled(
+        &mut self,
+        frame: &mut Frame<'a>,
+        state: State<'a>,
+        block: &'a Block,
+        names: &[&'a TokenReference],
+        fields: Vec<(Rc<str>, Value<'a>)>,
+    ) -> State<'a> {
+        frame.loops.push(LoopCtx {
+            breaks: Vec::new(),
+            continues: Vec::new(),
+        });
+        let mut current = state;
+        for (key, value) in fields {
+            if current.dead {
+                break;
+            }
+            let key = match key.parse::<f64>() {
+                Ok(n) => Value::of(Kind::Number(Some(n))),
+                Err(_) => Value::of(Kind::Str(Some(key))),
+            };
+            frame.scopes.push(BTreeMap::new());
+            for (i, name) in names.iter().enumerate() {
+                let bound = match i {
+                    0 => key.clone(),
+                    1 => value.clone(),
+                    _ => Value::unknown(),
+                };
+                self.declare_local(frame, &mut current, name, bound);
+            }
+            let body_end = self.exec_block(frame, block, current);
+            frame.scopes.pop();
+            let ctx = frame.loops.last_mut().expect("loop context");
+            let continues = std::mem::take(&mut ctx.continues);
+            current = State::join_all(std::iter::once(body_end).chain(continues));
+        }
+        let ctx = frame.loops.pop().expect("loop context");
+        State::join_all(std::iter::once(current).chain(ctx.breaks))
+    }
+
+    /// Key and element values for `for k, v in <collection>`.
+    fn iteration_values(&self, collection: &Value<'a>) -> (Value<'a>, Value<'a>) {
+        let element = self.element_of(collection);
         let key = if collection.is_tainted() {
             let mut key = Value::unknown();
             key.add_flows(collection.flows.iter().map(|f| Flow {
@@ -866,6 +963,7 @@ impl<'a> Analyzer<'a> {
             Var::Name(token) => {
                 let name = token_name(token);
                 // luau-shield007 lock pattern: `debounce = true`.
+                self.consume_expect(state, &name, &value, false);
                 self.note_lock_write(&name, &value, false);
                 let value = value.step(loc, &format!("assigned to `{name}`"));
                 self.write_name(frame, state, &name, value);
@@ -943,6 +1041,15 @@ impl<'a> Analyzer<'a> {
                 }
                 // luau-shield007 lock pattern: `busy[player] = true`, `tool.Enabled = false`.
                 let per_player = matches!(&key, Key::Dynamic(k, _) if k.player_rel);
+                // State machines: `state[player] = "Menu"`, `data[player].Slots[slot] = nil`.
+                let mut player_state = per_player;
+                for suffix in init {
+                    if let Suffix::Index(Index::Brackets { expression, .. }) = suffix {
+                        let k = self.peek(frame, state, expression);
+                        player_state |= k.player_rel && !k.is_tainted();
+                    }
+                }
+                self.consume_expect(state, &target_display, &value, player_state);
                 self.note_lock_write(&target_display, &value, per_player);
                 // Store into a table we track.
                 if let Some((root, keys)) = self.static_path(frame, var_expr.prefix(), init) {
@@ -1156,7 +1263,7 @@ impl<'a> Analyzer<'a> {
                             if flow.any(check::LENGTH) {
                                 checks |= check::UPPER;
                             }
-                            checks |= flow.checks & check::TRUSTED;
+                            checks |= flow.checks & check::KEPT;
                             v.add_flows([Flow {
                                 checks,
                                 raw: false,

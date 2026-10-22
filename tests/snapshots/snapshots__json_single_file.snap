@@ -6,6 +6,36 @@ expression: "report::json::render(&report)"
   "findings": [
     {
       "column": 2,
+      "end_column": 20,
+      "end_line": 13,
+      "file": "tests/fixtures/luau-shield001/vulnerable/admin-check-on-client-player.server.luau",
+      "fix": "Missing: a type check, a lower bound, an upper bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key.",
+      "flow": [
+        {
+          "column": 89,
+          "file": "tests/fixtures/luau-shield001/vulnerable/admin-check-on-client-player.server.luau",
+          "line": 9,
+          "note": "`coins` (parameter #3) of the `ReplicatedStorage.Remotes.AdminSetCoins.OnServerEvent` handler is sent by the client"
+        },
+        {
+          "column": 2,
+          "file": "tests/fixtures/luau-shield001/vulnerable/admin-check-on-client-player.server.luau",
+          "line": 13,
+          "note": "`coins` (client-controlled) is assigned to `data[player].Coins`"
+        }
+      ],
+      "help_uri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md",
+      "line": 13,
+      "message": "`coins` (client-controlled) is assigned to `data[player].Coins`",
+      "rule": "luau-shield001",
+      "severity": "high",
+      "slug": "untrusted-economy-write",
+      "snippet": "\tdata[player].Coins = coins -- expect: luau-shield001",
+      "title": "Client-controlled value written to currency, stats or saved data",
+      "why": "Exploiters can fire any remote with any arguments. If the server adds a client-supplied amount to a currency, saves a client-supplied table or lets the client pick the DataStore key, an exploiter can give themselves unlimited currency, corrupt other players' data or poison saves with NaN/huge values."
+    },
+    {
+      "column": 2,
       "end_column": 25,
       "end_line": 24,
       "file": "tests/fixtures/luau-shield001/vulnerable/chat-debug-command.server.luau",
@@ -49,6 +79,42 @@ expression: "report::json::render(&report)"
       "severity": "high",
       "slug": "untrusted-economy-write",
       "snippet": "\tPlayerData[player].Cash += amount -- expect: luau-shield001",
+      "title": "Client-controlled value written to currency, stats or saved data",
+      "why": "Exploiters can fire any remote with any arguments. If the server adds a client-supplied amount to a currency, saves a client-supplied table or lets the client pick the DataStore key, an exploiter can give themselves unlimited currency, corrupt other players' data or poison saves with NaN/huge values."
+    },
+    {
+      "column": 2,
+      "end_column": 20,
+      "end_line": 8,
+      "file": "tests/fixtures/luau-shield001/vulnerable/chat-give-command-without-admin-check.server.luau",
+      "fix": "Missing: a lower bound, an upper bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key.",
+      "flow": [
+        {
+          "column": 34,
+          "file": "tests/fixtures/luau-shield001/vulnerable/chat-give-command-without-admin-check.server.luau",
+          "line": 12,
+          "note": "`text` is the chat message typed by the player"
+        },
+        {
+          "column": 40,
+          "file": "tests/fixtures/luau-shield001/vulnerable/chat-give-command-without-admin-check.server.luau",
+          "line": 12,
+          "note": "passed to `onCommand` as `text`"
+        },
+        {
+          "column": 2,
+          "file": "tests/fixtures/luau-shield001/vulnerable/chat-give-command-without-admin-check.server.luau",
+          "line": 8,
+          "note": "`text` (client-controlled) is added to `data[sender].Coins`"
+        }
+      ],
+      "help_uri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md",
+      "line": 8,
+      "message": "`text` (client-controlled) is added to `data[sender].Coins`",
+      "rule": "luau-shield001",
+      "severity": "high",
+      "slug": "untrusted-economy-write",
+      "snippet": "\tdata[sender].Coins += tonumber(text) or 0 -- expect: luau-shield001",
       "title": "Client-controlled value written to currency, stats or saved data",
       "why": "Exploiters can fire any remote with any arguments. If the server adds a client-supplied amount to a currency, saves a client-supplied table or lets the client pick the DataStore key, an exploiter can give themselves unlimited currency, corrupt other players' data or poison saves with NaN/huge values."
     },
@@ -413,6 +479,78 @@ expression: "report::json::render(&report)"
       "why": "Exploiters can fire any remote with any arguments. If the server adds a client-supplied amount to a currency, saves a client-supplied table or lets the client pick the DataStore key, an exploiter can give themselves unlimited currency, corrupt other players' data or poison saves with NaN/huge values. Luau type annotations are erased at runtime: they do not validate anything."
     },
     {
+      "column": 2,
+      "end_column": 20,
+      "end_line": 7,
+      "file": "tests/fixtures/luau-shield001/vulnerable/look-sanitizer-deep-misses-a-field/src/server/Avatar.server.luau",
+      "fix": "Missing: a type check, a lower bound, an upper bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key.",
+      "flow": [
+        {
+          "column": 74,
+          "file": "tests/fixtures/luau-shield001/vulnerable/look-sanitizer-deep-misses-a-field/src/server/Avatar.server.luau",
+          "line": 6,
+          "note": "`raw` (parameter #2) of the `ReplicatedStorage.Remotes.SetLook.OnServerEvent` handler is sent by the client"
+        },
+        {
+          "column": 23,
+          "file": "tests/fixtures/luau-shield001/vulnerable/look-sanitizer-deep-misses-a-field/src/server/Avatar.server.luau",
+          "line": 7,
+          "note": "passed to `AvatarService.prepareLook` as `raw`"
+        },
+        {
+          "column": 2,
+          "file": "tests/fixtures/luau-shield001/vulnerable/look-sanitizer-deep-misses-a-field/src/server/AvatarService.luau",
+          "line": 8,
+          "note": "returned from `AvatarService.prepareLook`"
+        },
+        {
+          "column": 2,
+          "file": "tests/fixtures/luau-shield001/vulnerable/look-sanitizer-deep-misses-a-field/src/server/Avatar.server.luau",
+          "line": 7,
+          "note": "`raw` (client-controlled) is assigned to `saves[player].Look`"
+        }
+      ],
+      "help_uri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md",
+      "line": 7,
+      "message": "`raw` (client-controlled) is assigned to `saves[player].Look`",
+      "rule": "luau-shield001",
+      "severity": "high",
+      "slug": "untrusted-economy-write",
+      "snippet": "\tsaves[player].Look = AvatarService.prepareLook(raw) -- expect: luau-shield001",
+      "title": "Client-controlled value written to currency, stats or saved data",
+      "why": "Exploiters can fire any remote with any arguments. If the server adds a client-supplied amount to a currency, saves a client-supplied table or lets the client pick the DataStore key, an exploiter can give themselves unlimited currency, corrupt other players' data or poison saves with NaN/huge values."
+    },
+    {
+      "column": 2,
+      "end_column": 20,
+      "end_line": 8,
+      "file": "tests/fixtures/luau-shield001/vulnerable/look-sanitizer-misses-a-field/src/server/Avatar.server.luau",
+      "fix": "Missing: a type check, a lower bound, an upper bound and NaN rejection. The value comes from `Look.sanitize`, which luau-shield could not follow: if `Look.sanitize` validates it, declare it as a sanitizer (`[[sanitizers]]` with `function = \"Look.sanitize\"` in luau-shield.toml). Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key.",
+      "flow": [
+        {
+          "column": 47,
+          "file": "tests/fixtures/luau-shield001/vulnerable/look-sanitizer-misses-a-field/src/server/Avatar.server.luau",
+          "line": 7,
+          "note": "`raw` (parameter #2) of the `remote.OnServerEvent` handler is sent by the client"
+        },
+        {
+          "column": 2,
+          "file": "tests/fixtures/luau-shield001/vulnerable/look-sanitizer-misses-a-field/src/server/Avatar.server.luau",
+          "line": 8,
+          "note": "`raw` (client-controlled) is assigned to `saves[player].Look`"
+        }
+      ],
+      "help_uri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md",
+      "line": 8,
+      "message": "`raw` (client-controlled) is assigned to `saves[player].Look`",
+      "rule": "luau-shield001",
+      "severity": "high",
+      "slug": "untrusted-economy-write",
+      "snippet": "\tsaves[player].Look = Look.sanitize(raw) -- expect: luau-shield001",
+      "title": "Client-controlled value written to currency, stats or saved data",
+      "why": "Exploiters can fire any remote with any arguments. If the server adds a client-supplied amount to a currency, saves a client-supplied table or lets the client pick the DataStore key, an exploiter can give themselves unlimited currency, corrupt other players' data or poison saves with NaN/huge values."
+    },
+    {
       "column": 3,
       "end_column": 19,
       "end_line": 30,
@@ -631,6 +769,174 @@ expression: "report::json::render(&report)"
       "severity": "high",
       "slug": "untrusted-economy-write",
       "snippet": "\tdonorBoard:IncrementAsync(tostring(player.UserId), robux) -- expect: luau-shield001",
+      "title": "Client-controlled value written to currency, stats or saved data",
+      "why": "Exploiters can fire any remote with any arguments. If the server adds a client-supplied amount to a currency, saves a client-supplied table or lets the client pick the DataStore key, an exploiter can give themselves unlimited currency, corrupt other players' data or poison saves with NaN/huge values."
+    },
+    {
+      "column": 31,
+      "end_column": 43,
+      "end_line": 14,
+      "file": "tests/fixtures/luau-shield001/vulnerable/patch-table-from-client.server.luau",
+      "fix": "Missing: a type check, a lower bound, an upper bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key.",
+      "flow": [
+        {
+          "column": 47,
+          "file": "tests/fixtures/luau-shield001/vulnerable/patch-table-from-client.server.luau",
+          "line": 18,
+          "note": "`patch` (parameter #2) of the `remote.OnServerEvent` handler is sent by the client"
+        },
+        {
+          "column": 2,
+          "file": "tests/fixtures/luau-shield001/vulnerable/patch-table-from-client.server.luau",
+          "line": 20,
+          "note": "passed to `setFields` as `patch`"
+        },
+        {
+          "column": 11,
+          "file": "tests/fixtures/luau-shield001/vulnerable/patch-table-from-client.server.luau",
+          "line": 10,
+          "note": "assigned to `value`"
+        },
+        {
+          "column": 3,
+          "file": "tests/fixtures/luau-shield001/vulnerable/patch-table-from-client.server.luau",
+          "line": 11,
+          "note": "stored in `changed[key]`"
+        },
+        {
+          "column": 31,
+          "file": "tests/fixtures/luau-shield001/vulnerable/patch-table-from-client.server.luau",
+          "line": 14,
+          "note": "`value` (client-controlled, from `patch`) is assigned to `record.Level`"
+        }
+      ],
+      "help_uri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md",
+      "line": 14,
+      "message": "`value` (client-controlled, from `patch`) is assigned to `record.Level`",
+      "rule": "luau-shield001",
+      "severity": "high",
+      "slug": "untrusted-economy-write",
+      "snippet": "\tif changed.level ~= nil then record.Level = changed.level end -- expect: luau-shield001",
+      "title": "Client-controlled value written to currency, stats or saved data",
+      "why": "Exploiters can fire any remote with any arguments. If the server adds a client-supplied amount to a currency, saves a client-supplied table or lets the client pick the DataStore key, an exploiter can give themselves unlimited currency, corrupt other players' data or poison saves with NaN/huge values."
+    },
+    {
+      "column": 28,
+      "end_column": 37,
+      "end_line": 15,
+      "file": "tests/fixtures/luau-shield001/vulnerable/patch-table-from-client.server.luau",
+      "fix": "Missing: a type check, a lower bound, an upper bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key.",
+      "flow": [
+        {
+          "column": 47,
+          "file": "tests/fixtures/luau-shield001/vulnerable/patch-table-from-client.server.luau",
+          "line": 18,
+          "note": "`patch` (parameter #2) of the `remote.OnServerEvent` handler is sent by the client"
+        },
+        {
+          "column": 2,
+          "file": "tests/fixtures/luau-shield001/vulnerable/patch-table-from-client.server.luau",
+          "line": 20,
+          "note": "passed to `setFields` as `patch`"
+        },
+        {
+          "column": 11,
+          "file": "tests/fixtures/luau-shield001/vulnerable/patch-table-from-client.server.luau",
+          "line": 10,
+          "note": "assigned to `value`"
+        },
+        {
+          "column": 3,
+          "file": "tests/fixtures/luau-shield001/vulnerable/patch-table-from-client.server.luau",
+          "line": 11,
+          "note": "stored in `changed[key]`"
+        },
+        {
+          "column": 28,
+          "file": "tests/fixtures/luau-shield001/vulnerable/patch-table-from-client.server.luau",
+          "line": 15,
+          "note": "`value` (client-controlled, from `patch`) is assigned to `record.Xp`"
+        }
+      ],
+      "help_uri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md",
+      "line": 15,
+      "message": "`value` (client-controlled, from `patch`) is assigned to `record.Xp`",
+      "rule": "luau-shield001",
+      "severity": "high",
+      "slug": "untrusted-economy-write",
+      "snippet": "\tif changed.xp ~= nil then record.Xp = changed.xp end -- expect: luau-shield001",
+      "title": "Client-controlled value written to currency, stats or saved data",
+      "why": "Exploiters can fire any remote with any arguments. If the server adds a client-supplied amount to a currency, saves a client-supplied table or lets the client pick the DataStore key, an exploiter can give themselves unlimited currency, corrupt other players' data or poison saves with NaN/huge values."
+    },
+    {
+      "column": 31,
+      "end_column": 43,
+      "end_line": 18,
+      "file": "tests/fixtures/luau-shield001/vulnerable/patch-table-unchecked-field.server.luau",
+      "fix": "Missing: a lower bound, an upper bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key.",
+      "flow": [
+        {
+          "column": 47,
+          "file": "tests/fixtures/luau-shield001/vulnerable/patch-table-unchecked-field.server.luau",
+          "line": 21,
+          "note": "`amount` (parameter #2) of the `remote.OnServerEvent` handler is sent by the client"
+        },
+        {
+          "column": 11,
+          "file": "tests/fixtures/luau-shield001/vulnerable/patch-table-unchecked-field.server.luau",
+          "line": 12,
+          "note": "assigned to `value`"
+        },
+        {
+          "column": 3,
+          "file": "tests/fixtures/luau-shield001/vulnerable/patch-table-unchecked-field.server.luau",
+          "line": 13,
+          "note": "stored in `changed[key]`"
+        },
+        {
+          "column": 31,
+          "file": "tests/fixtures/luau-shield001/vulnerable/patch-table-unchecked-field.server.luau",
+          "line": 18,
+          "note": "`amount` (client-controlled) is assigned to `record.Coins`"
+        }
+      ],
+      "help_uri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md",
+      "line": 18,
+      "message": "`amount` (client-controlled) is assigned to `record.Coins`",
+      "rule": "luau-shield001",
+      "severity": "high",
+      "slug": "untrusted-economy-write",
+      "snippet": "\tif changed.coins ~= nil then record.Coins = changed.coins end -- expect: luau-shield001",
+      "title": "Client-controlled value written to currency, stats or saved data",
+      "why": "Exploiters can fire any remote with any arguments. If the server adds a client-supplied amount to a currency, saves a client-supplied table or lets the client pick the DataStore key, an exploiter can give themselves unlimited currency, corrupt other players' data or poison saves with NaN/huge values."
+    },
+    {
+      "column": 2,
+      "end_column": 20,
+      "end_line": 15,
+      "file": "tests/fixtures/luau-shield001/vulnerable/plot-owner-check-is-not-admin.server.luau",
+      "fix": "Missing: a type check, a lower bound, an upper bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key.",
+      "flow": [
+        {
+          "column": 88,
+          "file": "tests/fixtures/luau-shield001/vulnerable/plot-owner-check-is-not-admin.server.luau",
+          "line": 10,
+          "note": "`income` (parameter #3) of the `ReplicatedStorage.Remotes.CollectIncome.OnServerEvent` handler is sent by the client"
+        },
+        {
+          "column": 2,
+          "file": "tests/fixtures/luau-shield001/vulnerable/plot-owner-check-is-not-admin.server.luau",
+          "line": 15,
+          "note": "`income` (client-controlled) is added to `data[player].Coins`"
+        }
+      ],
+      "help_uri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md",
+      "line": 15,
+      "message": "`income` (client-controlled) is added to `data[player].Coins`",
+      "rule": "luau-shield001",
+      "severity": "high",
+      "slug": "untrusted-economy-write",
+      "snippet": "\tdata[player].Coins += income -- expect: luau-shield001",
       "title": "Client-controlled value written to currency, stats or saved data",
       "why": "Exploiters can fire any remote with any arguments. If the server adds a client-supplied amount to a currency, saves a client-supplied table or lets the client pick the DataStore key, an exploiter can give themselves unlimited currency, corrupt other players' data or poison saves with NaN/huge values."
     },
@@ -940,12 +1246,13 @@ expression: "report::json::render(&report)"
     "below_threshold": 0,
     "by_severity": {
       "critical": 0,
-      "high": 28,
+      "high": 36,
+      "info": 0,
       "low": 1,
       "medium": 0
     },
-    "files": 24,
-    "findings": 29,
+    "files": 34,
+    "findings": 37,
     "parse_errors": 0,
     "suppressed": 0
   },

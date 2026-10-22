@@ -13,6 +13,9 @@ use std::str::FromStr;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
+    /// Below every default threshold: shown only with `--min-severity info`
+    /// (findings downgraded by an admin guard, for example).
+    Info,
     Low,
     Medium,
     High,
@@ -22,6 +25,7 @@ pub enum Severity {
 impl Severity {
     pub fn as_str(self) -> &'static str {
         match self {
+            Severity::Info => "info",
             Severity::Low => "low",
             Severity::Medium => "medium",
             Severity::High => "high",
@@ -32,7 +36,7 @@ impl Severity {
     /// SARIF only knows `note`, `warning` and `error`.
     pub fn sarif_level(self) -> &'static str {
         match self {
-            Severity::Low => "note",
+            Severity::Info | Severity::Low => "note",
             Severity::Medium => "warning",
             Severity::High | Severity::Critical => "error",
         }
@@ -41,6 +45,7 @@ impl Severity {
     /// Numeric score used by GitHub code scanning (`security-severity`).
     pub fn security_score(self) -> &'static str {
         match self {
+            Severity::Info => "0.0",
             Severity::Low => "3.0",
             Severity::Medium => "5.5",
             Severity::High => "8.0",
@@ -60,12 +65,13 @@ impl FromStr for Severity {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_ascii_lowercase().as_str() {
+            "info" => Ok(Severity::Info),
             "low" => Ok(Severity::Low),
             "medium" => Ok(Severity::Medium),
             "high" => Ok(Severity::High),
             "critical" => Ok(Severity::Critical),
             other => Err(format!(
-                "unknown severity `{other}` (expected low, medium, high or critical)"
+                "unknown severity `{other}` (expected info, low, medium, high or critical)"
             )),
         }
     }

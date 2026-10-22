@@ -37,6 +37,7 @@ pub fn severity_counts(report: &Report) -> Vec<(Severity, usize)> {
         Severity::High,
         Severity::Medium,
         Severity::Low,
+        Severity::Info,
     ]
     .into_iter()
     .map(|s| {

@@ -2,10 +2,10 @@
 //! the standard library and of the Roblox API, `require`, and sinks.
 
 use super::interp::{Key, number_literal, unwrap_expr};
-use super::state::{Frame, State, Summary, SummaryCollector};
+use super::state::{Frame, Lit, ReturnSummary, State, Summary, SummaryCollector};
 use super::value::{
     Builtin, Checks, Closure, Flow, Func, Kind, ObjClass, SourceKind, Table, Target, Validator,
-    Value, check,
+    Value, Via, check,
 };
 use super::{Analyzer, EntryKind, ModuleState, compact, token_name, var_id};
 use crate::finding::Loc;
@@ -39,6 +39,126 @@ pub(crate) fn looks_like_validator(name: &str) -> bool {
                 .next()
                 .is_none_or(|c| c.is_ascii_uppercase() || c == '_')
     }) || lower.starts_with("valid")
+}
+
+/// Words in the names of functions that clean a value (`Look.sanitize`,
+/// `clampIndex`, `parseColor`): findings on their results suggest declaring
+/// them as sanitizers.
+const SANITIZER_WORDS: &[&str] = &[
+    "sanitiz", "sanitis", "validat", "clean", "normaliz", "normalis", "verif", "check", "coerce",
+    "clamp", "filter", "safe", "parse", "strict",
+];
+
+pub(crate) fn looks_like_sanitizer(name: &str) -> bool {
+    let last = name
+        .trim_end_matches("(...)")
+        .rsplit(['.', ':'])
+        .next()
+        .unwrap_or(name)
+        .to_ascii_lowercase();
+    SANITIZER_WORDS.iter().any(|w| last.contains(w))
+}
+
+/// The literal a value holds, for luau-shield007 state checks.
+pub(crate) fn literal_value(value: &Value<'_>) -> Option<Lit> {
+    if value.is_tainted() {
+        return None;
+    }
+    match &value.kind {
+        Kind::Nil => Some(Lit::Nil),
+        Kind::Bool(Some(b)) => Some(Lit::Bool(*b)),
+        Kind::Number(Some(n)) => Some(Lit::Num(Rc::from(n.to_string().as_str()))),
+        Kind::Str(Some(s)) => Some(Lit::Str(s.clone())),
+        _ => None,
+    }
+}
+
+/// Suggests declaring the function a value came out of as a sanitizer.
+fn sanitizer_hint(via: &Via) -> String {
+    let name = &via.name;
+    let config = format!(
+        "`[[sanitizers]]` with `function = \"{}\"` in luau-shield.toml",
+        name.replace(':', ".")
+    );
+    if via.analysed {
+        format!(
+            " The value comes from `{name}`, which does not make these checks on every path: \
+             if `{name}` does validate it, declare it as a sanitizer ({config})."
+        )
+    } else {
+        format!(
+            " The value comes from `{name}`, which luau-shield could not follow: if `{name}` \
+             validates it, declare it as a sanitizer ({config})."
+        )
+    }
+}
+
+/// Marks the results of the sanitizer-like function `name`.
+fn mark_via<'a>(values: &mut [Value<'a>], name: &str, analysed: bool) {
+    if !looks_like_sanitizer(name) {
+        return;
+    }
+    let via = Rc::new(Via {
+        name: Rc::from(name.trim_end_matches("(...)")),
+        analysed,
+    });
+    for value in values {
+        value.set_via_deep(&via);
+    }
+}
+
+/// A return value of `summary` for the actual arguments `args`: flows of
+/// each probe become the flows of the matching argument, with the checks
+/// the function made on the way.
+fn instantiate<'a>(
+    summary: &ReturnSummary<'a>,
+    value: &Value<'a>,
+    args: &[Value<'a>],
+    loc: Loc,
+    name: &str,
+    depth: usize,
+) -> Value<'a> {
+    let mut out = Value {
+        kind: value.kind.clone(),
+        player_rel: value.player_rel,
+        ..Value::default()
+    };
+    for flow in &value.flows {
+        let probe = summary
+            .probes
+            .iter()
+            .position(|p| *p == Some(flow.source.id));
+        match probe {
+            Some(i) => {
+                let Some(arg) = args.get(i) else {
+                    continue;
+                };
+                for actual in arg.deep_flows() {
+                    let stepped = actual.with_step(loc, format!("returned by `{name}`"));
+                    out.add_flows([Flow {
+                        checks: actual.checks | flow.checks,
+                        raw: actual.raw && flow.raw,
+                        instance_data: actual.instance_data || flow.instance_data,
+                        ..stepped
+                    }]);
+                }
+            }
+            None if flow.source.kind == SourceKind::Probe => {}
+            None => out.add_flows([flow.clone()]),
+        }
+    }
+    if let (Kind::Table(table), true) = (&value.kind, depth < 6) {
+        let mut table = (**table).clone();
+        for field in table.fields.values_mut() {
+            *field = instantiate(summary, field, args, loc, name, depth + 1);
+        }
+        if let Some(dynamic) = table.dynamic.as_mut() {
+            **dynamic = instantiate(summary, dynamic, args, loc, name, depth + 1);
+        }
+        table.fresh_frame = None;
+        out.kind = Kind::Table(Rc::new(table));
+    }
+    out
 }
 
 /// Does `name` look like an asserting validator (`assertAmount`, `ensureOwner`)?
@@ -218,12 +338,46 @@ impl<'a> Analyzer<'a> {
     // luau-shield007 bookkeeping
     // ------------------------------------------------------------------
 
-    fn note_expensive(&mut self, what: String) {
+    fn note_expensive(&mut self, frame: &Frame<'a>, state: &State<'a>, what: String) {
         if self.peek > 0 {
             return;
         }
+        let conditional = self.branch_depth > 0;
+        let function = (self.stack.len() > 1).then(|| frame.name.clone());
         if let Some(entry) = self.entry.as_mut() {
-            entry.expensive.push(what);
+            entry.expensive.push(super::Expensive {
+                what,
+                consumed: state.consumed,
+                conditional,
+                function,
+            });
+        }
+    }
+
+    /// luau-shield007: `text` (a state expression such as `state[player]`)
+    /// is assigned `value`. When a condition on this path tested it and the
+    /// new value makes that test fail next time, the state is consumed.
+    pub(crate) fn consume_expect(
+        &self,
+        state: &mut State<'a>,
+        text: &str,
+        value: &Value<'a>,
+        per_player: bool,
+    ) {
+        if self.entry.is_none() || self.peek > 0 {
+            return;
+        }
+        let Some(expect) = state.expects.remove(text) else {
+            return;
+        };
+        let lit = literal_value(value);
+        let truthy = if value.is_tainted() {
+            None
+        } else {
+            value.truthy_const()
+        };
+        if expect.violated_by(lit.as_ref(), truthy) {
+            state.consumed = Some(state.consumed.unwrap_or(false) || per_player);
         }
     }
 
@@ -258,54 +412,71 @@ impl<'a> Analyzer<'a> {
         if self.peek > 0 || self.quiet > 0 {
             return;
         }
+        let economy_like = matches!(
+            kind,
+            SinkKind::Economy
+                | SinkKind::DataKey
+                | SinkKind::Property
+                | SinkKind::Text
+                | SinkKind::InstanceProperty
+        );
+        // The first unchecked flow decides the finding; a flow that only
+        // reaches the sink behind a permission guard is kept as a fallback
+        // and reported as `info`.
+        let mut privileged: Option<(RuleId, String, Flow, String)> = None;
         for flow in value.deep_flows() {
-            let economy_like = matches!(
-                kind,
-                SinkKind::Economy
-                    | SinkKind::DataKey
-                    | SinkKind::Property
-                    | SinkKind::Text
-                    | SinkKind::InstanceProperty
-            );
-            if flow.instance_data && economy_like {
-                if let Some(missing) = sinks::missing(SinkKind::InstanceUse, &flow) {
-                    self.report(
-                        RuleId::Ls003,
-                        loc,
-                        format!(
-                            "data read from `{}`, an Instance chosen by the client, {what}",
-                            flow.source.name
-                        ),
-                        Some(&flow),
-                        Some(missing),
+            let failure = if flow.instance_data && economy_like {
+                sinks::missing(SinkKind::InstanceUse, &flow).map(|missing| {
+                    let message = format!(
+                        "data read from `{}`, an Instance chosen by the client, {what}",
+                        flow.source.name
                     );
-                    return;
+                    (RuleId::Ls003, message, missing)
+                })
+            } else {
+                let check_kind = if flow.instance_data {
+                    SinkKind::InstanceUse
+                } else {
+                    kind
+                };
+                sinks::missing(check_kind, &flow).map(|missing| {
+                    let subject = match value.path.as_deref() {
+                        Some(path)
+                            if path != flow.source.name
+                                && path.len() <= 60
+                                && !path.contains('(') =>
+                        {
+                            format!("`{path}` (client-controlled, from `{}`)", flow.source.name)
+                        }
+                        _ => format!("`{}` (client-controlled)", flow.source.name),
+                    };
+                    (rule, format!("{subject} {what}"), missing)
+                })
+            };
+            let Some((rule, message, mut missing)) = failure else {
+                continue;
+            };
+            if let Some(via) = &flow.via {
+                missing.push_str(&sanitizer_hint(via));
+            }
+            // Running code chosen by a chat message stays critical even for
+            // admins: a stolen admin account or a wrong asset id runs
+            // arbitrary code on the server.
+            if flow.any(check::PRIVILEGED) && rule != RuleId::Ls004 {
+                if privileged.is_none() {
+                    privileged = Some((rule, message, flow, missing));
                 }
                 continue;
             }
-            let check_kind = if flow.instance_data {
-                SinkKind::InstanceUse
-            } else {
-                kind
-            };
-            if let Some(missing) = sinks::missing(check_kind, &flow) {
-                let subject = match value.path.as_deref() {
-                    Some(path)
-                        if path != flow.source.name && path.len() <= 60 && !path.contains('(') =>
-                    {
-                        format!("`{path}` (client-controlled, from `{}`)", flow.source.name)
-                    }
-                    _ => format!("`{}` (client-controlled)", flow.source.name),
-                };
-                self.report(
-                    rule,
-                    loc,
-                    format!("{subject} {what}"),
-                    Some(&flow),
-                    Some(missing),
-                );
-                return;
-            }
+            self.report(rule, loc, message, Some(&flow), Some(missing));
+            return;
+        }
+        if let Some((rule, message, flow, missing)) = privileged {
+            let guard = self
+                .guard
+                .clone()
+                .unwrap_or_else(|| "a permission check".to_string());
+            self.report_downgraded(rule, loc, message, Some(&flow), Some(missing), guard);
         }
     }
 
@@ -483,7 +654,9 @@ impl<'a> Analyzer<'a> {
             let attr = args.first();
             let value = args.get(1);
             if let (Some(a), Some(v)) = (attr.and_then(|a| a.str_const()), value) {
-                self.note_lock_write(&format!("{recv_display}@{a}"), v, recv.player_rel);
+                let lock = format!("{recv_display}@{a}");
+                self.consume_expect(state, &lock, v, recv.player_rel);
+                self.note_lock_write(&lock, v, recv.player_rel);
             }
             if let (Some(attr), Some(value)) = (attr, value) {
                 let what = format!("is written by `{call}`");
@@ -891,7 +1064,9 @@ impl<'a> Analyzer<'a> {
             result.kind = Kind::Func(Rc::new(funcs));
         }
         result.path = Some(Rc::from(format!("{display}(...)").as_str()));
-        vec![result]
+        let mut results = vec![result];
+        mark_via(&mut results, display, false);
+        results
     }
 
     /// Calls a closure: binds the arguments, interprets the body and returns
@@ -926,11 +1101,27 @@ impl<'a> Analyzer<'a> {
             || self.stack.len() >= self.config.max_call_depth
             || self.stack.contains(&key)
         {
+            // Too deep (or out of budget) to follow here: use what the
+            // function returns in terms of its parameters, computed once.
+            let recursive = self.stack.contains(&key);
+            if self.peek == 0 && !recursive && summary.is_none() {
+                if let Some(rs) = self.return_summary(&closure, state) {
+                    let mut values: Vec<Value<'a>> = rs
+                        .returns
+                        .iter()
+                        .map(|v| instantiate(&rs, v, &args, loc, &closure.name, 0))
+                        .collect();
+                    mark_via(&mut values, &closure.name, true);
+                    return (values, None);
+                }
+            }
             let mut v = Value::unknown();
             for a in args.iter().chain(rest.iter()) {
                 v.add_flows(a.derived().flows);
             }
-            return (vec![v], None);
+            let mut values = vec![v];
+            mark_via(&mut values, &closure.name, false);
+            return (values, None);
         }
         self.stack.push(key);
         let id = self.new_frame_id();
@@ -1001,7 +1192,71 @@ impl<'a> Analyzer<'a> {
         for value in &mut returns {
             value.defined_by = None;
         }
+        mark_via(&mut returns, &closure.name, true);
         (returns, frame.summary.take())
+    }
+
+    /// What `closure` returns in terms of its parameters (computed once,
+    /// with placeholder "probe" arguments and a fresh call stack). Used when
+    /// a call cannot be followed: the checks a sanitizer makes on its
+    /// arguments still apply to its result.
+    fn return_summary(
+        &mut self,
+        closure: &Rc<Closure<'a>>,
+        base: &State<'a>,
+    ) -> Option<Rc<ReturnSummary<'a>>> {
+        let key = closure.key();
+        if let Some(cached) = self.return_summaries.get(&key) {
+            return cached.clone();
+        }
+        let variadic = closure
+            .body
+            .parameters()
+            .iter()
+            .any(|p| matches!(p, Parameter::Ellipsis(_)));
+        if variadic || self.summary_nesting >= 2 {
+            return None;
+        }
+        self.return_summaries.insert(key, None);
+        let saved_stack = std::mem::take(&mut self.stack);
+        let saved_entry = self.entry.take();
+        let saved_budget = self.budget;
+        let saved_guard = self.guard.take();
+        self.quiet += 1;
+        self.summary_nesting += 1;
+        self.budget = 8_000;
+        let mut args = Vec::new();
+        let mut probes = Vec::new();
+        if closure.is_method {
+            args.push(Value::unknown());
+            probes.push(None);
+        }
+        for param in closure.body.parameters() {
+            if let Parameter::Name(token) = param {
+                let loc = self.loc(closure.file, token);
+                let source = self.new_source(
+                    SourceKind::Probe,
+                    token_name(token),
+                    String::new(),
+                    loc,
+                    None,
+                );
+                probes.push(Some(source.id));
+                args.push(self.tainted(source));
+            }
+        }
+        let mut state = base.clone();
+        let returns =
+            self.call_closure(&mut state, closure.clone(), args, None, closure.loc, false);
+        self.quiet -= 1;
+        self.summary_nesting -= 1;
+        self.budget = saved_budget;
+        self.entry = saved_entry;
+        self.guard = saved_guard;
+        self.stack = saved_stack;
+        let summary = Rc::new(ReturnSummary { probes, returns });
+        self.return_summaries.insert(key, Some(summary.clone()));
+        Some(summary)
     }
 
     /// What `closure` guarantees about its parameters (computed once, with
@@ -1319,6 +1574,7 @@ impl<'a> Analyzer<'a> {
                 // luau-shield007: `table.insert(busy, player)` marks the player busy.
                 if let (Some(expr), true) = (arg_exprs.first(), value.player_rel) {
                     let lock = format!("{}@find", compact(unwrap_expr(expr)));
+                    self.consume_expect(state, &lock, &value, true);
                     self.note_lock_write(&lock, &value, true);
                 }
                 if let Some(expr) = arg_exprs.first() {
@@ -1409,11 +1665,17 @@ impl<'a> Analyzer<'a> {
                 for a in &args {
                     v.add_flows(a.derived().flows);
                 }
+                // `string.match(text, "(%-?%d+)")`: only digits come out, so
+                // `tonumber` of the result is never NaN.
+                let numeric = arg(1).str_const().is_some_and(sinks::numeric_pattern);
+                if builtin == Builtin::StringMatch && numeric {
+                    v.add_checks(check::NAN_SAFE);
+                }
                 // `string.match` / `string.find` return one value per capture.
                 vec![v.clone(), v.clone(), v.clone(), v]
             }
             Builtin::InstanceNew => {
-                self.note_expensive("`Instance.new`".to_string());
+                self.note_expensive(frame, state, "`Instance.new`".to_string());
                 let class = arg(0).str_const().map(str::to_string).unwrap_or_default();
                 vec![Value::obj(
                     ObjClass::Unknown,
@@ -1560,10 +1822,10 @@ impl<'a> Analyzer<'a> {
         let display = format!("{recv_display}:{name}");
         self.note_rate_limit_name(&display);
         if name.ends_with("Async") {
-            self.note_expensive(format!("`{display}()`"));
+            self.note_expensive(frame, state, format!("`{display}()`"));
         }
         if name == "Clone" {
-            self.note_expensive(format!("`{display}()`"));
+            self.note_expensive(frame, state, format!("`{display}()`"));
         }
         if name == "GetServerTimeNow" {
             self.note_rate_limit();
@@ -1685,6 +1947,13 @@ impl<'a> Analyzer<'a> {
                     for arg in &args {
                         result.add_flows(arg.derived().flows);
                     }
+                    let numeric = args
+                        .first()
+                        .and_then(Value::str_const)
+                        .is_some_and(sinks::numeric_pattern);
+                    if name == "match" && numeric {
+                        result.add_checks(check::NAN_SAFE);
+                    }
                     return vec![result.clone(), result.clone(), result.clone(), result];
                 }
             } else {
@@ -1721,7 +1990,11 @@ impl<'a> Analyzer<'a> {
         }
         result.player_rel = recv.player_rel;
         result.path = Some(Rc::from(format!("{display}()").as_str()));
-        vec![result]
+        let mut results = vec![result];
+        if !recv.is_tainted() {
+            mark_via(&mut results, &display, false);
+        }
+        results
     }
 
     /// The method `name` when exactly one table returned by a module that
@@ -1929,7 +2202,7 @@ impl<'a> Analyzer<'a> {
                 for flow in arg(0).flows {
                     v.add_flows([Flow {
                         raw: true,
-                        checks: flow.checks & check::TRUSTED,
+                        checks: flow.checks & check::KEPT,
                         ..flow
                     }]);
                 }
@@ -2024,7 +2297,7 @@ fn length_of<'a>(value: &Value<'a>) -> Value<'a> {
     let mut v = Value::of(Kind::Number(None));
     for flow in value.deep_flows() {
         let mut checks =
-            check::TYPE_NUMBER | check::LOWER | check::NAN_SAFE | (flow.checks & check::TRUSTED);
+            check::TYPE_NUMBER | check::LOWER | check::NAN_SAFE | (flow.checks & check::KEPT);
         if flow.any(check::LENGTH) {
             checks |= check::UPPER;
         }

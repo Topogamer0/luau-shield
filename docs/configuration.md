@@ -97,7 +97,7 @@ timeout-seconds = 60
 | `project` | string | `default.project.json` when it exists | Rojo project file used to map files to instances (`ServerScriptService`, `ReplicatedStorage`, ...). This decides where code runs: see [Where code runs](analysis.md#1-where-code-runs). Without a project, directory names are used as hints. |
 | `ignore` | array of globs | `[]` | Files and directories that are not analysed. Globs are relative to the directory of the configuration file: `*` matches inside one path segment, `**` matches any number of directories. Directories named `Packages`, `DevPackages`, `ServerPackages`, `node_modules` and `.git` are always skipped. |
 | `trust-unresolved-validators` | boolean | `true` | When a guard calls a function that cannot be resolved and whose name starts with `is`, `validate`, `verify`, `check`, `sanitize`, `assert` or `ensure` (for example `Validator.isValidItem(x)` from a package), trust it to validate its arguments. Set to `false` to require real checks or [sanitizers](#sanitizers). |
-| `max-call-depth` | integer | `6` | How many nested calls into local functions and required modules are followed. Deeper calls are cut off: their result is treated conservatively. |
+| `max-call-depth` | integer | `6` | How many nested calls into local functions and required modules are followed. A deeper call is replaced by a summary of the function, made once with placeholder arguments: what it returns in terms of its parameters, with the checks it made (see [analysis](analysis.md#3-propagation)). A function that cannot be summarised (recursive, variadic, over budget) is cut off: its result carries the client data of its arguments, unchecked. |
 | `allow-parse-errors` | boolean | `false` | A file that cannot be read or parsed is skipped with a warning, and by default the run then exits with code `2`, because the file was not analysed. Set to `true` (or pass `--allow-parse-errors`) to only warn. |
 
 How `min-severity` and `fail-on` combine (exit code `2` always means a usage,
@@ -291,16 +291,43 @@ A permission check is one of:
     `assert(...)`, `local ok = Admins.isAdmin(player)`), or is compared with
     `true`. `isAdmin(player) ~= nil` and `isAdmin(player) == false` do not
     count: they also hold when the function returns `false` or `nil` for
-    other players.
-- **An inline check** on the sender: `player.UserId == game.CreatorId`,
-  `player.UserId == 12345`, `player:GetRankInGroup(GROUP) >= 250`,
-  `ADMINS[player.UserId]` or `table.find(ADMIN_IDS, player.UserId)` with a
-  server table whose name contains `admin`, `moder`, `staff`, `owner`,
-  `whitelist`, `developer` or `permission`.
+    other players;
+  - inside a service, `self:isAdmin(player)` (and Knit's
+    `self.Server:isAdmin(player)`) is named after the table the method is
+    declared on (`AdminService:isAdmin`);
+  - the module must not be chosen by the client
+    (`ClanRoles[clanId]:isModerator(player)` is not a permission check).
+- **A permission level** returned by a guard function and compared with a
+  server value: `Admin.getLevel(player) >= 2`, `getRank(player) <
+  command.rank` (then the code after it is admin only). A constant
+  threshold must be at least 1 (level 0 is everybody). Declare your level
+  functions in `functions`.
+- **An inline check** on the sender (built in, see `defaults`):
+  - `player.UserId == game.CreatorId` or `player.UserId == 12345`;
+  - `player:GetRankInGroup(GROUP) >= 250` (also `> N`, `== N`, or the
+    reject forms `< N` and `~= N`, and through a local holding the rank):
+    the group must be a constant and the lowest rank that passes at least 2
+    (rank 1 is any member of the group, rank 0 anybody);
+  - `player:GetRoleInGroup(GROUP) == "Admin"`, with a constant group and a
+    role name that contains `owner`, `admin`, `moder`, `staff`, `developer`,
+    `creator` or `founder`;
+  - `ADMINS[player.UserId]` or `table.find(ADMIN_IDS, player.UserId)` (also
+    through a local, or compared with `nil`) with a server table whose name
+    contains `admin`, `moder`, `staff` or `developer`. Not `owner` (every
+    player owns a plot or a tycoon, game pass owners are players) nor
+    `whitelist` (beta testers). The table must not be picked with a key the
+    client sends (`clanAdmins[clanId]`), and no remote handler may write
+    client data into it: a list the client can add itself to proves
+    nothing, and the findings that relied on it are reported at their
+    normal severity.
 
 Findings of luau-shield001, 002, 003, 005 and 007 behind such a check are
-downgraded, including a `player.Chatted` listener that is only connected
-after the check. Two kinds are never downgraded:
+downgraded. So are a `player.Chatted` listener connected only after the
+check, for the player who passed it (a listener on another player, such as
+the target of an admin tool, gets that player's messages), and `...` of the
+handler itself. A function or callback reached from both an admin handler
+and a public one is analysed for both: its findings in the public one are
+not downgraded. Two kinds are never downgraded:
 
 - code execution (luau-shield004): a stolen admin account or a wrong asset
   id would run arbitrary code on the server;
@@ -316,7 +343,7 @@ defaults = true
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `functions` | array of [function patterns](#function-patterns) | `[]` | Your own permission checks. A pattern with a single name (`"canModerate"`) matches that name on any receiver. |
-| `defaults` | boolean | `true` | Also trust the built-in names above. Set to `false` if a function with one of these names in your code does not check permissions. |
+| `defaults` | boolean | `true` | Also trust the built-in names and the inline checks above (creator id, group rank and role, permission lists). Set to `false` if one of them does not check permissions in your code; then only `functions` count. |
 
 ## Sinks
 

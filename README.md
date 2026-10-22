@@ -458,22 +458,22 @@ findings with the expected ones line by line.
 
 | Rule | Vulnerable entries | Safe entries | Expected findings | Found | False positives | False negatives |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| luau-shield001 | 46 | 39 | 61 | 61 | 0 | 0 |
+| luau-shield001 | 79 | 50 | 130 | 130 | 0 | 0 |
 | luau-shield002 | 22 | 21 | 26 | 26 | 0 | 0 |
 | luau-shield003 | 19 | 20 | 23 | 23 | 0 | 0 |
-| luau-shield004 | 9 | 9 | 9 | 9 | 0 | 0 |
+| luau-shield004 | 9 | 10 | 9 | 9 | 0 | 0 |
 | luau-shield005 | 14 | 16 | 15 | 15 | 0 | 0 |
 | luau-shield006 | 12 | 9 | 14 | 14 | 0 | 0 |
-| luau-shield007 | 28 | 19 | 28 | 28 | 0 | 0 |
+| luau-shield007 | 58 | 25 | 58 | 58 | 0 | 0 |
 | luau-shield008 | 14 | 10 | 17 | 17 | 0 | 0 |
-| **Total** | **164** | **143** | **193** | **193** | **0** | **0** |
+| **Total** | **227** | **161** | **292** | **292** | **0** | **0** |
 
 The example game in [`examples/vulnerable-game`](examples/vulnerable-game)
 gives the 27 findings listed in its `EXPECTED.md`, and its fixed version gives
 none.
 
-`tests/fixtures/limitations` holds 10 cases that luau-shield is known to get
-wrong today, giving 6 false-positive findings and 5 missed findings. They are
+`tests/fixtures/limitations` holds 11 cases that luau-shield is known to get
+wrong today, giving 7 false-positive findings and 5 missed findings. They are
 counted separately so they never hide a regression:
 
 | Case | Mistake | Why |
@@ -483,6 +483,7 @@ counted separately so they never hide a regression:
 | checks made in a first loop over a table, writes in a second loop | false positive | facts about loop elements stay in their loop |
 | a validator closure that checks upvalues instead of parameters (2 writes) | false positive | validator facts are learned for parameters only |
 | a recursive `deepCopy` of a nested, checked patch | false positive | the recursive call is cut off and its result loses the checks |
+| a state written first and its previous value tested after (luau-shield007) | false positive | only test-then-change state machines are recognised |
 | data relayed through a `BindableEvent` | false negative | signals are not followed |
 | data stored in a `ValueBase`/attribute and read back | false negative | Instance state is not tracked |
 | a write through an alias of a table | false negative | tables are tracked by value |
@@ -519,7 +520,14 @@ directions.
   or inside a validator that reads upvalues instead of its parameters do not
   protect the original.
 - **Depth**: loops are analysed a bounded number of times and calls are
-  followed up to `max-call-depth` (default 6).
+  followed up to `max-call-depth` (default 6); deeper calls are replaced by a
+  summary of what the function returns, and sinks inside them are not
+  reported.
+- **Permission guards are trusted by shape**: a function named like
+  `isAdmin` on a permission module, a high group rank or a server list named
+  like an admin list makes the code after it admin only (`info`). A guard
+  that is wrong (an `isAdmin` that returns true for everybody) is not
+  detected; turn the built-in guards off with `[guards] defaults = false`.
 
 Every known mistake has a test in
 [`tests/fixtures/limitations`](tests/fixtures/limitations). When luau-shield is

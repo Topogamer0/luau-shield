@@ -335,24 +335,46 @@ functions it calls, silences the finding. Any of these is evidence:
    ```
 
    As with locks, a state keyed by the player limits that player; a state
-   shared by every player only counts when the handler waits (or yields)
-   while it is closed. It does not count when:
+   shared by every player only counts when the handler waits while it is
+   closed (`task.wait(t)` or `task.delay(t, ...)` with `t` of at least 0.1
+   seconds, not chosen by the client). It does not count when:
 
-   - the handler changes it back before yielding (no other request ever
-     sees it closed);
-   - it is changed on both sides of the same test (a toggle: every request
-     flips it and does the work);
+   - the handler changes it back before waiting (no other request ever sees
+     it closed), including when it schedules a cleanup with `task.delay` and
+     then reopens the state itself, when the only wait is on another path (a
+     back-off after a failed save), or when a function connected to
+     `Heartbeat` reopens it on the next frame;
+   - another path of the same handler writes a value that passes the test
+     again: a toggle (`if mode[player] == "On" then mode[player] = "Off"
+     return end; mode[player] = "On"`), or a client-chosen action that joins
+     and leaves on the same remote;
    - the handler yields between the test and the change (every request fired
-     meanwhile passes the test);
+     meanwhile passes the test): `task.wait`, `*Async` calls, `:Wait()`,
+     `WaitForChild`, `InvokeClient`, `BindableFunction:Invoke()`, Promise
+     `:await()`/`:expect()`, `coroutine.yield()`, also on the right of `and`
+     / `or` (`player.Character or player.CharacterAdded:Wait()`) and in
+     functions past the call depth;
+   - the change only happens later, in a function passed to `task.delay`,
+     `task.defer` or a Promise `:andThen()`;
+   - a local copy read *before* a yield is tested after it (the copy is
+     stale);
    - its key is chosen by the client and the work needs the entry to be
      empty (`if redeemed[player][code] then return end` → every new `code`
-     is empty);
-   - only a local copy is changed (`local s = state[player]; s = "Menu"`).
+     is empty), also through a local (`local uses = codeUses[code]`);
+   - the state table is created by the request itself (`local claimed =
+     {}` in the handler);
+   - only a local copy is changed (`local s = state[player]; s = "Menu"`),
+     or the state of another player (a helper called with the target of an
+     invite).
 
    The state can be read into a local first (`local current =
-   state[player]`), compared with named constants (`State.Playing`), or kept
-   in an attribute (`player:GetAttribute("State") ~= "Lobby"` then
-   `player:SetAttribute("State", "Queue")`).
+   state[player]`, also `local profile = Profiles[player]` then
+   `profile.Data.Claimed`), compared with named constants
+   (`State.Playing`), kept in an attribute (`player:GetAttribute("State")
+   ~= "Lobby"` then `player:SetAttribute("State", "Queue")`) or in a list
+   (`table.find(queue, player)` then `table.insert` or `table.remove`).
+   Wrapping the work in `pcall` and resetting the state after it is fine:
+   the call yields while the state is closed.
 
 What is **not** enough:
 
@@ -417,10 +439,14 @@ The rule looks for evidence, it does not prove that the limit works:
   missed, and rate limiting implemented there is only seen when the call's
   name contains one of the words above.
 - **A state machine is only as good as its other transitions.** The rule
-  checks that the handler changes the state it tested; it does not check
-  how the state comes back. If another remote resets `state[player] =
-  "Playing"` without a limit, a client can alternate the two remotes. Rate
-  limit the cheaper remote too.
+  checks that the handler changes the state it tested and that no other path
+  of the same handler puts it back; it does not check how other remotes
+  bring it back. If another remote resets `state[player] = "Playing"`
+  without a limit, a client can alternate the two remotes. Rate limit the
+  cheaper remote too.
+- **Test first, then change.** A state written first and tested after
+  (`local previous = state[player]; state[player] = "Ready"; if previous ==
+  "Ready" then return end`) is not recognised and is still reported.
 - **Work under a condition is described, not excused.** When every expensive
   call of a handler runs inside an `if` (`if data[player] then
   store:SetAsync(...) end`) and not on the other branch, the message says it

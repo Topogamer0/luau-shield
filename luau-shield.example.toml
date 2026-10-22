@@ -81,8 +81,8 @@ max-call-depth = 6
 # hasPermission(s) (case and underscores are ignored), called directly or on a
 # module named like a permission module (Admins, PermissionService, Ranks...).
 [guards]
-# functions = ["Admins.isAdmin", "PermissionService:Check"]   # a single name matches any receiver
-defaults = true                  # false: only trust the functions listed above
+# functions = ["Admins.isAdmin", "PermissionService:Check", "Admin.getLevel"]   # a single name matches any receiver
+defaults = true                  # false: only trust the functions listed above (no built-in names, no inline checks)
 
 # Settings for --explain (a local Ollama server; host from OLLAMA_HOST,
 # default http://localhost:11434).

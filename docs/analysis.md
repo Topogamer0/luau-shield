@@ -97,11 +97,17 @@ arguments (`self` included), and records what it returns in terms of its
 parameters, including the checks it made: a sanitizer reached through many
 layers (`Look.fromV1(raw)` → ... → `Look.sanitize(raw)` →
 `clampIndex(v, 10, 1)`) still protects its result. A function that returns
-one of its parameters is assumed to have stored the other arguments in it
-(`TableUtil.assign(target, source)`), and bounds that come from another
-argument only count when that argument is server data. Sinks inside such deep
-functions are not reported, and a summary that runs out of its own budget is
-not used.
+one of its parameters unchanged (`return target` in
+`TableUtil.assign(target, source)`) is assumed to have stored the other
+arguments in it. Bounds and allow-lists that came from another parameter
+(`math.clamp(v, 1, max)`, `value <= max` in `inRange(value, min, max)`) only
+count when that argument is server data at the call (an id the server
+allow-listed counts as server data); this also applies to validators used as
+guards. Closures the function returns keep the arguments they captured
+(`Result.ok(value).unwrap()`), and a function that yields (`task.wait`, an
+`*Async` call) yields at the call. A summary that reads client data stored in
+module state is not reused by other calls. Sinks inside such deep functions
+are not reported, and a summary that runs out of its own budget is not used.
 
 Reading a value out of a **server-owned** table with an untrusted key does
 *not* produce untrusted data: `PRICES[itemId]` is a server value (it may be
@@ -229,8 +235,9 @@ its result suggest declaring it as a [sanitizer](configuration.md#sanitizers).
 Code that only runs after a permission check on the sender
 (`if not Admins.isAdmin(player) then return end`) is admin-only: findings
 there are reported with severity `info` ("admin only"), which is hidden by
-default. Code execution (luau-shield004) is never downgraded. See
-[Guards](configuration.md#guards) for the names that count and how to add
+default. Code execution (luau-shield004) and unfiltered text shown to other
+players (luau-shield002 on `Text`) are never downgraded. See
+[Guards](configuration.md#guards) for the checks that count and how to add
 your own.
 
 ## 5. Sinks

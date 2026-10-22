@@ -443,10 +443,40 @@ vulnerable cases and closely related safe cases that are validated correctly.
 `cargo test --test corpus` runs luau-shield on all of them and compares the
 findings with the expected ones line by line.
 
-<!-- corpus-table -->
+| Rule | Vulnerable entries | Safe entries | Expected findings | Found | False positives | False negatives |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| luau-shield001 | 22 | 27 | 29 | 29 | 0 | 0 |
+| luau-shield002 | 21 | 21 | 25 | 25 | 0 | 0 |
+| luau-shield003 | 18 | 19 | 22 | 22 | 0 | 0 |
+| luau-shield004 | 9 | 9 | 9 | 9 | 0 | 0 |
+| luau-shield005 | 14 | 16 | 15 | 15 | 0 | 0 |
+| luau-shield006 | 12 | 9 | 14 | 14 | 0 | 0 |
+| luau-shield007 | 17 | 14 | 17 | 17 | 0 | 0 |
+| luau-shield008 | 14 | 10 | 17 | 17 | 0 | 0 |
+| **Total** | **127** | **125** | **148** | **148** | **0** | **0** |
 
-`tests/fixtures/limitations` holds cases that luau-shield is known to get
-wrong; they are counted separately and listed below.
+The example game in [`examples/vulnerable-game`](examples/vulnerable-game)
+gives the 27 findings listed in its `EXPECTED.md`, and its fixed version gives
+none.
+
+`tests/fixtures/limitations` holds 9 cases that luau-shield is known to get
+wrong today, giving 5 false-positive findings and 5 missed findings. They are
+counted separately so they never hide a regression:
+
+| Case | Mistake | Why |
+| --- | --- | --- |
+| a check on a copy of the variable (`local n = amount`, `n` checked) | false positive | the check refines `n`, not `amount` |
+| `assert`s inside a function run with `pcall` | false positive | the `pcall` result is not linked to the asserts |
+| checks made in a first loop over a table, writes in a second loop | false positive | facts about loop elements stay in their loop |
+| a validator closure that checks upvalues instead of parameters (2 writes) | false positive | validator facts are learned for parameters only |
+| data relayed through a `BindableEvent` | false negative | signals are not followed |
+| data stored in a `ValueBase`/attribute and read back | false negative | Instance state is not tracked |
+| a write through an alias of a table | false negative | tables are tracked by value |
+| a module chosen at runtime (`require(Shops[mode])`) | false negative | computed requires are not resolved |
+| an inventory key checked only with an anchored pattern | false negative | the pattern proves the format, not that the item exists |
+
+Run `cargo test --test corpus -- --nocapture` to print these numbers (set
+`LUAU_SHIELD_CORPUS_REPORT=<file>` to also write the table to a file).
 
 ## Limitations
 
@@ -470,6 +500,10 @@ directions.
   can be turned off).
 - **Checks are not proven correct**: a bound that is too large still counts as
   a bound.
+- **Where checks apply**: a check protects the variable it tests, from that
+  point on. Checks on a copy of the variable, on elements in an earlier loop,
+  or inside a validator that reads upvalues instead of its parameters do not
+  protect the original.
 - **Depth**: loops are analysed a bounded number of times and calls are
   followed up to `max-call-depth` (default 6).
 

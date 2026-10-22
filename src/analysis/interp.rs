@@ -2,7 +2,7 @@
 
 use super::state::{Frame, LoopCtx, State};
 use super::value::{
-    Builtin, Closure, Flow, Func, Kind, Obj, ObjClass, Table, Target, Value, check,
+    Builtin, Closure, Flow, Func, Kind, Obj, ObjClass, SourceKind, Table, Target, Value, check,
 };
 use super::{Analyzer, EntryKind, compact, global_id, token_name, var_id};
 use crate::finding::Loc;
@@ -101,6 +101,7 @@ fn library_member(library: &str, member: &str) -> Builtin {
         ("task", "spawn" | "defer" | "delay") => Spawn,
         ("task", "wait") => Wait,
         ("coroutine", "wrap" | "create") => Spawn,
+        ("coroutine", "yield") => Yield,
         ("os", "clock" | "time") => Clock,
         ("DateTime", "now") => Clock,
         ("Instance", "new" | "fromExisting") => InstanceNew,
@@ -320,6 +321,28 @@ fn known_fields<'a>(
     )
 }
 
+/// Client data that is not only an admin's: `PRIVILEGED` flows come from a
+/// player who passed a permission check (and probes are not data).
+pub(crate) fn client_written(flows: &[Flow]) -> bool {
+    flows
+        .iter()
+        .any(|f| f.checks & check::PRIVILEGED == 0 && f.source.kind != SourceKind::Probe)
+}
+
+/// `ADMINS[player.UserId]`: a lookup in a table named like a permission
+/// list (`local isAdmin = ADMINS[player.UserId]; if not isAdmin then`).
+fn is_permission_lookup(expr: &Expression) -> bool {
+    match unwrap_expr(expr) {
+        Expression::Var(Var::Expression(var)) => {
+            matches!(
+                var.suffixes().last(),
+                Some(Suffix::Index(Index::Brackets { .. }))
+            ) && super::refine::permission_named(&compact(var.prefix()))
+        }
+        _ => false,
+    }
+}
+
 /// An expression whose value is the outcome of a check.
 pub(crate) fn is_condition(expr: &Expression) -> bool {
     match unwrap_expr(expr) {
@@ -463,7 +486,7 @@ impl<'a> Analyzer<'a> {
                 let mut values = self.eval_list(frame, &mut state, &exprs);
                 // `local ok = isValid(x)`: remember the condition behind `ok`.
                 if let (Some(first), Some(expr)) = (values.first_mut(), exprs.first()) {
-                    if is_condition(expr) || is_measure(expr) {
+                    if is_condition(expr) || is_measure(expr) || is_permission_lookup(expr) {
                         first.defined_by = Some(expr);
                     }
                     // `local current = state[player]`: testing `current` tests
@@ -472,9 +495,26 @@ impl<'a> Analyzer<'a> {
                         first.alias = self.state_key(frame, var).map(|k| Rc::from(k.as_str()));
                     }
                 }
+                // luau-shield007: a local holding a player's entry
+                // (`local profile = Profiles[player]`) or an entry the client
+                // chose (`local uses = codeUses[code]`) keys the states
+                // written through it.
+                let origins: Vec<(bool, bool)> = exprs
+                    .iter()
+                    .map(|e| self.entry_origin(frame, &mut state, e))
+                    .collect();
                 for (i, name) in local.names().iter().enumerate() {
                     let value = values.get(i).cloned().unwrap_or_else(Value::nil);
                     self.declare_local(frame, &mut state, name, value);
+                    if let Some((per_player, client)) = origins.get(i).copied() {
+                        let id = var_id(frame.file, name);
+                        if per_player {
+                            self.player_locals.insert(id);
+                        }
+                        if client {
+                            self.client_locals.insert(id);
+                        }
+                    }
                 }
             }
             Stmt::ConstAssignment(local) => {
@@ -951,18 +991,36 @@ impl<'a> Analyzer<'a> {
     }
 
     /// The value of an element of a collection.
+    /// Any value stored in `table` (the join of its fields), or `None` when
+    /// it is empty. Remembered for large tables (an item catalog looked up
+    /// with a dynamic key in every handler).
+    fn join_elements(&self, table: &Rc<Table<'a>>) -> Option<Value<'a>> {
+        let large = table.fields.len() > 8;
+        let id = Rc::as_ptr(table) as usize;
+        if large {
+            if let Some((_, joined)) = self.element_joins.borrow().get(&id) {
+                return joined.clone();
+            }
+        }
+        let mut acc: Option<Value<'a>> = None;
+        for value in table.fields.values().chain(table.dynamic.as_deref()) {
+            acc = Some(match acc {
+                None => value.clone(),
+                Some(a) => a.join(value),
+            });
+        }
+        if large {
+            // The entry keeps the table alive, so its address is not reused.
+            self.element_joins
+                .borrow_mut()
+                .insert(id, (table.clone(), acc.clone()));
+        }
+        acc
+    }
+
     pub(crate) fn element_of(&self, collection: &Value<'a>) -> Value<'a> {
         let mut element = match &collection.kind {
-            Kind::Table(table) => {
-                let mut acc: Option<Value<'a>> = None;
-                for value in table.fields.values().chain(table.dynamic.as_deref()) {
-                    acc = Some(match acc {
-                        None => value.clone(),
-                        Some(a) => a.join(value),
-                    });
-                }
-                acc.unwrap_or_default()
-            }
+            Kind::Table(table) => self.join_elements(table).unwrap_or_default(),
             _ => Value::unknown(),
         };
         element.add_flows(collection.flows.iter().map(|f| Flow {
@@ -1165,10 +1223,28 @@ impl<'a> Analyzer<'a> {
                         client_key |= !k.deep_flows().is_empty();
                     }
                 }
-                if let Some(state_key) = self.state_key(frame, var) {
+                if let Prefix::Name(token) = var_expr.prefix() {
+                    if let Some(id) = frame.lookup(&token_name(token)) {
+                        player_state |= self.player_locals.contains(&id);
+                        client_key |= self.client_locals.contains(&id);
+                    }
+                }
+                // A table built by this request (`local claimed = {}` in the
+                // handler) is gone by the next one: it limits nothing.
+                let fresh = matches!(&base.kind, Kind::Table(t) if t.fresh_frame.is_some_and(|id| {
+                    id == frame.id || self.live_frames.contains(&id)
+                }));
+                if let (Some(state_key), false) = (self.state_key(frame, var), fresh) {
                     self.consume_expect(state, &state_key, &value, player_state, client_key);
                 }
                 self.note_lock_write(&target_display, &value, per_player);
+                let key_flows = match &key {
+                    Key::Dynamic(k, _) => k.deep_flows(),
+                    Key::Name(_) => Vec::new(),
+                };
+                if client_written(&key_flows) || client_written(&value.deep_flows()) {
+                    self.note_client_write(frame, var_expr.prefix(), init);
+                }
                 // Store into a table we track.
                 if let Some((root, keys)) = self.static_path(frame, var_expr.prefix(), init) {
                     let mut keys = keys;
@@ -1186,6 +1262,55 @@ impl<'a> Analyzer<'a> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Whether `expr` reads an entry of a table keyed by the sender (`T[player]`,
+    /// `T[player.UserId].Data`) and whether a key the client chose is used,
+    /// also through locals that hold such entries (see `player_locals`).
+    fn entry_origin(
+        &mut self,
+        frame: &mut Frame<'a>,
+        state: &mut State<'a>,
+        expr: &'a Expression,
+    ) -> (bool, bool) {
+        if self.entry.is_none() {
+            return (false, false);
+        }
+        let Expression::Var(Var::Expression(var)) = unwrap_expr(expr) else {
+            return (false, false);
+        };
+        let (mut per_player, mut client) = (false, false);
+        if let Prefix::Name(token) = var.prefix() {
+            if let Some(id) = frame.lookup(&token_name(token)) {
+                per_player |= self.player_locals.contains(&id);
+                client |= self.client_locals.contains(&id);
+            }
+        }
+        for suffix in var.suffixes() {
+            if let Suffix::Index(Index::Brackets { expression, .. }) = suffix {
+                let key = self.peek(frame, state, expression);
+                per_player |= key.player_rel && !key.is_tainted();
+                client |= !key.deep_flows().is_empty();
+            }
+        }
+        (per_player, client)
+    }
+
+    /// Records that client data was written into the table at `prefix` +
+    /// `suffixes` (see `Analyzer::client_written`).
+    pub(crate) fn note_client_write(
+        &mut self,
+        frame: &Frame<'a>,
+        prefix: &'a Prefix,
+        suffixes: &[&'a Suffix],
+    ) {
+        if self.peek > 0 || self.quiet > 0 {
+            return;
+        }
+        self.client_epoch += 1;
+        if let Some(id) = self.static_path(frame, prefix, suffixes) {
+            self.client_written.insert(id);
         }
     }
 
@@ -1215,6 +1340,24 @@ impl<'a> Analyzer<'a> {
     }
 
     /// `root.k1.k2` as (variable id, keys) when the expression is a static path.
+    /// The identity of a table named by a variable (see `static_path`).
+    pub(crate) fn table_id(&self, frame: &Frame<'a>, var: &'a Var) -> Option<(u64, Vec<Rc<str>>)> {
+        match var {
+            Var::Name(token) => {
+                let name = token_name(token);
+                let root = frame
+                    .lookup(&name)
+                    .unwrap_or_else(|| global_id(frame.file, &name));
+                Some((root, Vec::new()))
+            }
+            Var::Expression(var) => {
+                let suffixes: Vec<&'a Suffix> = var.suffixes().collect();
+                self.static_path(frame, var.prefix(), &suffixes)
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn static_path(
         &self,
         frame: &Frame<'a>,
@@ -1333,8 +1476,10 @@ impl<'a> Analyzer<'a> {
                         values.push(rest.clone());
                     }
                 }
-                // `...` is not a variable: apply a permission guard here.
-                if let Some(guard) = &state.admin {
+                // `...` is not a variable: apply a permission guard here
+                // (the handler's own `...` only: a helper's may hold another
+                // client's data).
+                if let (Some(guard), true) = (&state.admin, frame.entry) {
                     for value in &mut values {
                         value.privilege_deep(guard);
                     }
@@ -1371,7 +1516,7 @@ impl<'a> Analyzer<'a> {
                         (None, Some(rest)) => rest.clone(),
                         (None, None) => Value::nil(),
                     };
-                    if let Some(guard) = &state.admin {
+                    if let (Some(guard), true) = (&state.admin, frame.entry) {
                         value.privilege_deep(guard);
                     }
                     value
@@ -1559,7 +1704,12 @@ impl<'a> Analyzer<'a> {
                     &r.on_false
                 };
                 self.apply_facts(&mut right_state, facts);
+                let yields_before = self.yield_count;
                 let right = self.eval(frame, &mut right_state, rhs);
+                // `player.Character or player.CharacterAdded:Wait()` may yield.
+                if self.yield_count != yields_before {
+                    self.note_yield(state);
+                }
                 let is_and = matches!(binop, BinOp::And(_));
                 match (left.truthy_const(), is_and) {
                     (Some(true), true) | (Some(false), false) => right,
@@ -2019,16 +2169,9 @@ impl<'a> Analyzer<'a> {
                 .or_else(|| table.dynamic.as_deref().cloned())
                 .unwrap_or_else(Value::nil),
             (Kind::Table(table), Key::Dynamic(..)) => {
-                let mut acc: Option<Value<'a>> = None;
-                for v in table.fields.values().chain(table.dynamic.as_deref()) {
-                    acc = Some(match acc {
-                        None => v.clone(),
-                        Some(a) => a.join(v),
-                    });
-                }
                 // An empty table may be filled elsewhere (`sessions[player]`
                 // set in a PlayerAdded handler): the entry is unknown, not nil.
-                acc.unwrap_or_else(Value::unknown)
+                self.join_elements(table).unwrap_or_else(Value::unknown)
             }
             (Kind::Obj(obj), Key::Name(name)) => self.obj_member(obj, name, base),
             (Kind::Obj(obj), Key::Dynamic(..)) if obj.class == ObjClass::GlobalEnv => {

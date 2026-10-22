@@ -1,0 +1,2 @@
+[guards]
+functions = ["Admin.CheckAdmin", "Admin.GetLevel", "AdminRanks.getRank", "getRank", "GetLevel"]

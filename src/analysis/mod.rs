@@ -123,8 +123,8 @@ pub(crate) struct Pending<'a> {
 pub(crate) struct Expensive {
     what: String,
     /// States the handler changed after testing them, before this work (see
-    /// `State::consumed`): text and per-player flag.
-    consumed: Vec<(Rc<str>, bool)>,
+    /// `State::consumed`): text, per-player flag and what the test proved.
+    consumed: Vec<(Rc<str>, bool, state::Expect)>,
     /// Inside an `if` branch.
     conditional: bool,
     /// The function holding that condition, when it is not the handler.
@@ -156,6 +156,9 @@ pub(crate) struct EntryCtx {
     /// Index into `expensive` of work that also runs on the other branches
     /// of its `if` (not conditional after all).
     unconditional: HashSet<usize>,
+    /// Writes to states on paths where they were not closed: the value
+    /// written (literal, truthiness).
+    state_writes: Vec<(Rc<str>, Option<state::Lit>, Option<bool>)>,
 }
 
 enum ModuleState<'a> {
@@ -174,12 +177,18 @@ struct RawFinding {
     guarded_by: Option<String>,
 }
 
+/// Joined elements of large tables, by table address (the table is kept
+/// alive with its entry).
+type ElementJoins<'a> = HashMap<usize, (Rc<value::Table<'a>>, Option<Value<'a>>)>;
+
 pub struct Analyzer<'a> {
     project: &'a Project,
     config: &'a Config,
     raw: Vec<RawFinding>,
     reported: HashSet<(RuleId, usize, usize, usize)>,
     ls003_sources: HashSet<u32>,
+    /// The same for admin-only (`info`) findings.
+    ls003_admin_sources: HashSet<u32>,
     suppressed: HashSet<(RuleId, usize, usize, usize)>,
     modules: HashMap<usize, ModuleState<'a>>,
     /// Modules each file requires (file -> module files).
@@ -195,6 +204,8 @@ pub struct Analyzer<'a> {
     next_source: u32,
     next_frame: u32,
     stack: Vec<(usize, usize)>,
+    /// Frames of the functions running now (tables they built are fresh).
+    live_frames: HashSet<u32>,
     /// > 0: findings are not reported (validator summaries).
     quiet: u32,
     /// > 0: evaluating only to learn values for a refinement: no calls are analysed.
@@ -215,10 +226,33 @@ pub struct Analyzer<'a> {
     /// The last permission guard (`Admins.isAdmin(player)`) seen in the
     /// current entry point, named in downgraded findings.
     guard: Option<String>,
+    /// The player that passed the last permission guard (its variable).
+    guard_sender: Option<VarId>,
+    /// Permission lists behind each guard text (`admins[player.UserId]`).
+    guard_lists: HashMap<String, Vec<refine::TableId>>,
+    /// Tables written with client data (`admins[userId] = true` in a
+    /// remote handler): permission lists among them prove nothing.
+    client_written: HashSet<refine::TableId>,
+    /// Counts writes of client data into tables (return summaries made
+    /// before the last one may miss it).
+    client_epoch: u64,
+    /// luau-shield007: locals of the current entry point holding an entry
+    /// keyed by the sender (`local profile = Profiles[player]`) and entries
+    /// chosen by the client (`local uses = codeUses[code]`).
+    player_locals: HashSet<VarId>,
+    client_locals: HashSet<VarId>,
+    /// Calls that yielded so far (see `note_yield`).
+    yield_count: u64,
+    /// Joined elements of large tables (see `join_elements`).
+    element_joins: std::cell::RefCell<ElementJoins<'a>>,
+    /// `client_epoch` when the current entry point started.
+    entry_epoch: u64,
     budget: usize,
     pending: Vec<Pending<'a>>,
-    analysed_entries: HashSet<(usize, usize, usize, usize)>,
-    inlined_callbacks: HashSet<(usize, usize)>,
+    analysed_entries: HashSet<((usize, usize, usize, usize), bool)>,
+    /// Callbacks analysed where they were passed to unknown functions, and
+    /// whether that was only after a permission guard.
+    inlined_callbacks: HashSet<((usize, usize), bool)>,
     warnings: Vec<String>,
 }
 
@@ -245,6 +279,7 @@ impl<'a> Analyzer<'a> {
             raw: Vec::new(),
             reported: HashSet::new(),
             ls003_sources: HashSet::new(),
+            ls003_admin_sources: HashSet::new(),
             suppressed: HashSet::new(),
             modules: HashMap::new(),
             required: HashMap::new(),
@@ -256,6 +291,7 @@ impl<'a> Analyzer<'a> {
             next_source: 1,
             next_frame: 1,
             stack: Vec::new(),
+            live_frames: HashSet::new(),
             quiet: 0,
             peek: 0,
             module_eval: 0,
@@ -266,6 +302,15 @@ impl<'a> Analyzer<'a> {
             branch_owners: Vec::new(),
             unroll_depth: 0,
             guard: None,
+            guard_sender: None,
+            guard_lists: HashMap::new(),
+            client_written: HashSet::new(),
+            client_epoch: 0,
+            element_joins: std::cell::RefCell::new(HashMap::new()),
+            yield_count: 0,
+            player_locals: HashSet::new(),
+            client_locals: HashSet::new(),
+            entry_epoch: 0,
             budget: ENTRY_BUDGET,
             pending: Vec::new(),
             analysed_entries: HashSet::new(),
@@ -403,6 +448,7 @@ impl<'a> Analyzer<'a> {
             loops: Vec::new(),
             summary: None,
             name: Rc::from("<script>"),
+            entry: false,
         }
     }
 
@@ -468,7 +514,14 @@ impl<'a> Analyzer<'a> {
             } else {
                 pending.registration.span.line * 10_000 + pending.registration.file
             };
-            if !self.analysed_entries.insert((kf, kb, kind_tag, reg_key)) {
+            // Registered again without a permission guard: analyse again,
+            // its findings are not admin only.
+            let admin = pending.admin.is_some()
+                || pending.state.as_ref().is_some_and(|s| s.admin.is_some());
+            let entry_key = (kf, kb, kind_tag, reg_key);
+            if self.analysed_entries.contains(&(entry_key, false))
+                || !self.analysed_entries.insert((entry_key, admin))
+            {
                 continue;
             }
             let args = self.entry_args(closure, &pending.kind, &base);
@@ -480,7 +533,11 @@ impl<'a> Analyzer<'a> {
                 });
             }
             self.budget = ENTRY_BUDGET;
+            self.entry_epoch = self.client_epoch;
+            self.player_locals.clear();
+            self.client_locals.clear();
             self.guard = None;
+            self.guard_sender = None;
             self.branch_depth = 0;
             self.branch_owners.clear();
             self.unroll_depth = 0;
@@ -523,8 +580,14 @@ impl<'a> Analyzer<'a> {
                     .iter()
                     .enumerate()
                     .filter(|(_, e)| {
-                        !e.consumed.iter().any(|(text, per_player)| {
-                            !ctx.toggles.contains(text)
+                        !e.consumed.iter().any(|(text, per_player, expect)| {
+                            // Another path of the handler writes a value that
+                            // passes the test again: the client alternates.
+                            let reopened = ctx.state_writes.iter().any(|(t, lit, truthy)| {
+                                t == text && !expect.violated_by(lit.as_ref(), *truthy)
+                            });
+                            !reopened
+                                && !ctx.toggles.contains(text)
                                 && !ctx.released_early.contains(text)
                                 && (*per_player || ctx.waited_while.contains(text))
                         })
@@ -770,9 +833,14 @@ impl<'a> Analyzer<'a> {
         }
         // One luau-shield003 finding per client Instance; an admin-only one
         // does not hide a later exploitable one.
-        if rule == RuleId::Ls003 && guarded_by.is_none() {
+        if rule == RuleId::Ls003 {
             if let Some(flow) = flow {
-                if !self.ls003_sources.insert(flow.source.id) {
+                let sources = if guarded_by.is_none() {
+                    &mut self.ls003_sources
+                } else {
+                    &mut self.ls003_admin_sources
+                };
+                if !sources.insert(flow.source.id) {
                     return;
                 }
             }
@@ -796,7 +864,19 @@ impl<'a> Analyzer<'a> {
         });
     }
 
-    fn finish(self) -> AnalysisOutput {
+    fn finish(mut self) -> AnalysisOutput {
+        // A permission list the client can add itself to (another remote
+        // writes client data into it) does not make code admin only.
+        for raw in &mut self.raw {
+            let unsafe_list = raw.guarded_by.as_ref().is_some_and(|guard| {
+                self.guard_lists
+                    .get(guard)
+                    .is_some_and(|lists| lists.iter().any(|l| self.client_written.contains(l)))
+            });
+            if unsafe_list {
+                raw.guarded_by = None;
+            }
+        }
         let mut findings = Vec::new();
         for raw in &self.raw {
             findings.push(self.to_finding(raw));
@@ -848,15 +928,27 @@ impl<'a> Analyzer<'a> {
         let mut severity = self.config.severity_of(raw.rule);
         if let Some(guard) = &raw.guarded_by {
             severity = Severity::Info;
-            message.push_str(&format!(" (admin only: after `{guard}`)"));
+            let shown = if guard.as_str() == "a permission check" {
+                guard.clone()
+            } else {
+                format!("`{guard}`")
+            };
+            message.push_str(&format!(" (admin only: after {shown})"));
             why = format!(
-                "This code only runs for players that pass `{guard}`, so an exploiter \
+                "This code only runs for players that pass {shown}, so an exploiter \
                  cannot reach it unless that check is wrong. {why}"
             );
-            fix = format!(
-                "Admin-only code: the value is still unchecked, so a typo or a \
-                 compromised admin account can corrupt data. {fix}"
-            );
+            fix = if raw.rule == RuleId::Ls007 {
+                format!(
+                    "Admin-only code: a compromised admin account or a stuck key can \
+                     still flood it. {fix}"
+                )
+            } else {
+                format!(
+                    "Admin-only code: the value is still unchecked, so a typo or a \
+                     compromised admin account can corrupt data. {fix}"
+                )
+            };
         }
         Finding {
             rule: raw.rule,

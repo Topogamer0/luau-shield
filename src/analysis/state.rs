@@ -25,6 +25,9 @@ pub struct State<'a> {
     /// Consumed states the handler yielded or waited with (other requests
     /// could see them closed).
     pub waited: std::collections::BTreeSet<Rc<str>>,
+    /// Consumed states this path kept closed during a real wait
+    /// (`task.wait(t)`, `task.delay(t, ...)`).
+    pub paused: std::collections::BTreeSet<Rc<str>>,
     /// A permission guard on the sender succeeded on this path (its text).
     pub admin: Option<Rc<str>>,
 }
@@ -86,7 +89,9 @@ impl<'a> State<'a> {
         for (id, value) in vars.iter_mut() {
             // Variables declared on one path only (block-local) are kept.
             if let Some(theirs) = other_vars.remove(id) {
-                *value = value.join(&theirs);
+                if !value.absorbs(&theirs) {
+                    *value = value.join(&theirs);
+                }
             }
         }
         vars.extend(other_vars);
@@ -120,6 +125,11 @@ impl<'a> State<'a> {
             .into_iter()
             .filter(|k| other.waited.contains(k))
             .collect();
+        let paused = self
+            .paused
+            .into_iter()
+            .filter(|k| other.paused.contains(k))
+            .collect();
         let admin = if self.admin == other.admin {
             self.admin
         } else {
@@ -132,6 +142,7 @@ impl<'a> State<'a> {
             expects,
             consumed,
             waited,
+            paused,
             admin,
         }
     }
@@ -223,9 +234,12 @@ impl Facts {
                 out.expects.insert(text.clone(), expect.clone());
             }
         }
-        if self.guard == other.guard {
-            out.guard = self.guard.clone();
-        }
+        // `isAdmin(p) or isModerator(p)`: either guard passed.
+        out.guard = match (&self.guard, &other.guard) {
+            (Some(a), Some(b)) if a == b => Some(a.clone()),
+            (Some(a), Some(b)) => Some(Rc::from(format!("{a}` or `{b}").as_str())),
+            _ => None,
+        };
         out
     }
 
@@ -290,6 +304,12 @@ pub struct ReturnSummary<'a> {
     /// The probe source of each argument position (`None` for `self`).
     pub probes: Vec<Option<u32>>,
     pub returns: Vec<Value<'a>>,
+    /// Variables of the call captured by the closures it returns.
+    pub captured: Vec<(VarId, Value<'a>)>,
+    /// The function yields (`task.wait`, an `*Async` call).
+    pub yields: bool,
+    /// `Analyzer::client_epoch` when it was made.
+    pub epoch: u64,
 }
 
 /// One function activation.
@@ -308,6 +328,8 @@ pub struct Frame<'a> {
     pub summary: Option<SummaryCollector>,
     /// Name of the function, for messages.
     pub name: Rc<str>,
+    /// The entry point's own frame (its `...` are the request's arguments).
+    pub entry: bool,
 }
 
 impl<'a> Frame<'a> {

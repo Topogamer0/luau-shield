@@ -1,11 +1,13 @@
 //! Conditions: what a guard teaches us about untrusted values on each branch.
 
-use super::calls::looks_like_validator;
+use super::calls::{client_bound, looks_like_validator, relative_checks};
 use super::interp::{
     args_exprs, is_condition, is_falsy_literal, string_literal, symbol_of, unwrap_expr,
 };
 use super::state::{Expect, Facts, Frame, Lit, Refinement, State};
-use super::value::{Builtin, Checks, Func, Kind, ObjClass, SourceKind, Target, Value, check};
+use super::value::{
+    Builtin, Checks, Func, Kind, ObjClass, SourceKind, Target, Value, VarId, check,
+};
 use super::{Analyzer, token_name};
 use full_moon::ast::{BinOp, Call, Expression, FunctionCall, Index, Prefix, Suffix, UnOp, Var};
 use full_moon::tokenizer::{Symbol, TokenReference};
@@ -46,6 +48,18 @@ impl Cmp {
     }
 
     /// `a < b` is `b > a`.
+    /// The comparison that holds when `self` does not (`<` is `>=`).
+    fn negate(self) -> Cmp {
+        match self {
+            Cmp::Eq => Cmp::Ne,
+            Cmp::Ne => Cmp::Eq,
+            Cmp::Lt => Cmp::Ge,
+            Cmp::Le => Cmp::Gt,
+            Cmp::Gt => Cmp::Le,
+            Cmp::Ge => Cmp::Lt,
+        }
+    }
+
     fn flip(self) -> Cmp {
         match self {
             Cmp::Lt => Cmp::Gt,
@@ -120,7 +134,7 @@ impl<'a> Analyzer<'a> {
                 }
             }
             Expression::FunctionCall(call) => {
-                if let Some(text) = state_call_text(call) {
+                if let Some(text) = state_call_text(frame, call) {
                     texts.push(text);
                 }
             }
@@ -165,7 +179,7 @@ impl<'a> Analyzer<'a> {
                                 }
                                 other => {
                                     key.push('[');
-                                    key.push_str(&super::compact(other));
+                                    key.push_str(&declared_text(frame, &super::compact(other)));
                                     key.push(']');
                                 }
                             }
@@ -213,10 +227,27 @@ fn literal_of(expr: &Expression) -> Option<Lit> {
     }
 }
 
+/// `text` (`player.UserId`, `busy`) with its leading variable named by its
+/// declaration (`player#1a2b.UserId`), like `Analyzer::state_key`: the same
+/// text in a helper whose parameter has the same name is another state.
+pub(crate) fn declared_text(frame: &Frame<'_>, text: &str) -> String {
+    let end = text
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(text.len());
+    let (name, rest) = text.split_at(end);
+    if name.is_empty() {
+        return text.to_string();
+    }
+    match frame.lookup(name) {
+        Some(id) => format!("{name}#{id:x}{rest}"),
+        None => format!("{name}#g{rest}"),
+    }
+}
+
 /// The state a call reads, named like the writes that change it:
 /// `recv@Attr` for `recv:GetAttribute("Attr")`, `list@find` for
 /// `table.find(list, x)`.
-fn state_call_text(call: &FunctionCall) -> Option<String> {
+fn state_call_text(frame: &Frame<'_>, call: &FunctionCall) -> Option<String> {
     let (prefix, init, last) = split_call(call)?;
     match last {
         Call::MethodCall(method) if token_name(method.name()) == "GetAttribute" => {
@@ -227,7 +258,7 @@ fn state_call_text(call: &FunctionCall) -> Option<String> {
             for s in &init {
                 recv.push_str(&super::compact(*s));
             }
-            Some(format!("{recv}@{attr}"))
+            Some(format!("{}@{attr}", declared_text(frame, &recv)))
         }
         Call::AnonymousCall(args) => {
             let is_find = matches!(prefix, Prefix::Name(t) if token_name(t) == "table")
@@ -236,10 +267,40 @@ fn state_call_text(call: &FunctionCall) -> Option<String> {
                 return None;
             }
             let list = args_exprs(args).into_iter().next()?;
-            Some(format!("{}@find", super::compact(unwrap_expr(list))))
+            Some(format!(
+                "{}@find",
+                declared_text(frame, &super::compact(unwrap_expr(list)))
+            ))
         }
         _ => None,
     }
+}
+
+/// A server table and the fields leading to it (`Config.Admins` is
+/// `Config` and `["Admins"]`).
+pub(crate) type TableId = (VarId, Vec<Rc<str>>);
+
+/// Words in the name of a server table that lists players with permissions
+/// (`ADMINS[player.UserId]`, `table.find(Config.Moderators, id)`). Not
+/// `owner` (plot, tycoon or game pass owners) nor `whitelist` (beta testers).
+pub(crate) fn permission_named(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    ["admin", "moder", "staff", "developer"]
+        .iter()
+        .any(|w| lower.contains(w))
+}
+
+/// `table.find(list, x)`: an index or nil, never `false`.
+fn is_table_find(expr: &Expression) -> bool {
+    let Expression::FunctionCall(call) = unwrap_expr(expr) else {
+        return false;
+    };
+    matches!(
+        split_call(call),
+        Some((Prefix::Name(t), init, Call::AnonymousCall(_)))
+            if token_name(t) == "table"
+                && matches!(init.as_slice(), [Suffix::Index(Index::Dot { name, .. })] if token_name(name) == "find")
+    )
 }
 
 fn is_nil(expr: &Expression) -> bool {
@@ -765,6 +826,12 @@ impl<'a> Analyzer<'a> {
                             on_false: r.on_false.union(&own.on_false),
                         }
                     }
+                    // `local isAdmin = ADMINS[player.UserId]; if isAdmin then`
+                    Some(lookup @ Expression::Var(_)) if self.condition_depth < 4 => {
+                        let mut own = self.refine_truthy(frame, state, expr);
+                        own.on_true = own.on_true.union(&self.list_guard(frame, state, lookup));
+                        own
+                    }
                     _ => self.refine_truthy(frame, state, expr),
                 }
             }
@@ -786,37 +853,7 @@ impl<'a> Analyzer<'a> {
             on_true.add(witness.clone(), check::ALLOWLIST);
         }
         // `if ADMINS[player.UserId] then`: the sender is in a permission list.
-        if let Expression::Var(Var::Expression(var)) = unwrap_expr(expr) {
-            let suffixes: Vec<&'a Suffix> = var.suffixes().collect();
-            if let Some((Suffix::Index(Index::Brackets { expression, .. }), init)) =
-                suffixes.split_last()
-            {
-                let mut list = super::compact(var.prefix());
-                for s in init {
-                    list.push_str(&super::compact(*s));
-                }
-                let lower = list.to_ascii_lowercase();
-                let named = [
-                    "admin",
-                    "moder",
-                    "staff",
-                    "owner",
-                    "whitelist",
-                    "developer",
-                    "permission",
-                ]
-                .iter()
-                .any(|w| lower.contains(w));
-                let base = self.peek_suffixed(frame, state, var.prefix(), init);
-                if named
-                    && base.deep_flows().is_empty()
-                    && self.sender_arg(frame, state, expression) == Some(true)
-                {
-                    on_true =
-                        on_true.union(&self.privilege(state, super::compact(unwrap_expr(expr))));
-                }
-            }
-        }
+        on_true = on_true.union(&self.list_guard(frame, state, expr));
         // luau-shield007 lock pattern: `if busy[player] then return end`,
         // `if debounce then return end`, `if not tool.Enabled then return end`.
         let mut on_false = Facts::default();
@@ -825,8 +862,22 @@ impl<'a> Analyzer<'a> {
                 on_true = on_true.union(&Facts::expect(text.as_str(), Expect::Truthy));
                 on_false = on_false.union(&Facts::expect(text.as_str(), Expect::Falsy));
             }
-            self.pending_lock_reads
-                .push(super::compact(unwrap_expr(expr)));
+            // A local of this function is a copy made by this request: it
+            // cannot lock the next one.
+            let local = match unwrap_expr(expr) {
+                Expression::Var(Var::Name(t)) => {
+                    let name = token_name(t);
+                    frame
+                        .scopes
+                        .iter()
+                        .any(|scope| scope.contains_key(name.as_str()))
+                }
+                _ => false,
+            };
+            if !local {
+                self.pending_lock_reads
+                    .push(super::compact(unwrap_expr(expr)));
+            }
         }
         Refinement { on_true, on_false }
     }
@@ -930,10 +981,14 @@ impl<'a> Analyzer<'a> {
             let mut truthy = self.refine_condition(frame, state, other);
             // `isAdmin(player) ~= nil` also holds when it returns false: not a
             // permission check (also through a local holding the result).
-            truthy = Refinement {
-                on_true: truthy.on_true.without_guard(),
-                on_false: truthy.on_false.without_guard(),
-            };
+            // `table.find(ADMIN_IDS, player.UserId) ~= nil` is: it returns
+            // an index or nil.
+            if !is_table_find(other) {
+                truthy = Refinement {
+                    on_true: truthy.on_true.without_guard(),
+                    on_false: truthy.on_false.without_guard(),
+                };
+            }
             return if cmp == Cmp::Eq {
                 Refinement {
                     on_true: Facts::default(),
@@ -1036,9 +1091,18 @@ impl<'a> Analyzer<'a> {
             trusted_left.flows.clear();
             let a = self.compare_facts(frame, state, lhs, cmp, trusted_right);
             let b = self.compare_facts(frame, state, rhs, cmp.flip(), trusted_left);
+            // The bound is the caller's argument: see `check::RELATIVE`.
+            let relative = |mut facts: Facts| {
+                for checks in facts.map.values_mut() {
+                    if *checks & check::RELATIVE_FACTS != 0 {
+                        *checks |= check::RELATIVE;
+                    }
+                }
+                facts
+            };
             return Refinement {
-                on_true: a.on_true.union(&b.on_true),
-                on_false: a.on_false.union(&b.on_false),
+                on_true: relative(a.on_true.union(&b.on_true)),
+                on_false: relative(a.on_false.union(&b.on_false)),
             };
         }
         let (tainted_expr, other, cmp) = if left.is_tainted() && !right.is_tainted() {
@@ -1212,7 +1276,7 @@ impl<'a> Analyzer<'a> {
         let mut on_false = r.on_false;
         // luau-shield007 state kept in an attribute or a list:
         // `if player:GetAttribute("Busy") then`, `if table.find(busy, player) then`.
-        if let (Some(text), true) = (state_call_text(call), self.entry.is_some()) {
+        if let (Some(text), true) = (state_call_text(frame, call), self.entry.is_some()) {
             on_true = on_true.union(&Facts::expect(text.as_str(), Expect::Truthy));
             on_false = on_false.union(&Facts::expect(text.as_str(), Expect::Falsy));
         }
@@ -1229,10 +1293,22 @@ impl<'a> Analyzer<'a> {
         state: &mut State<'a>,
         call: &'a FunctionCall,
     ) -> Facts {
-        let facts = Facts::default();
-        let Some((prefix, init, last)) = split_call(call) else {
-            return facts;
-        };
+        match self.guard_call(frame, state, call) {
+            Some(sender) => self.privilege_by(state, super::compact(call), sender, None),
+            None => Facts::default(),
+        }
+    }
+
+    /// The root variable of the sender tested by a call to a permission
+    /// guard (`Some(None)` when it has none), or `None` when `call` is not
+    /// one.
+    fn guard_call(
+        &mut self,
+        frame: &mut Frame<'a>,
+        state: &mut State<'a>,
+        call: &'a FunctionCall,
+    ) -> Option<Option<VarId>> {
+        let (prefix, init, last) = split_call(call)?;
         let mut path: Vec<String> = Vec::new();
         if let Prefix::Name(t) = prefix {
             path.push(token_name(t));
@@ -1242,39 +1318,104 @@ impl<'a> Analyzer<'a> {
                 path.push(token_name(name));
             }
         }
+        // `self:isAdmin(player)` in `function AdminService:GiveCoins(...)`
+        // (also Knit's `self.Server:isAdmin(player)`): the module is the
+        // table the method is declared on.
+        if path.first().is_some_and(|p| p == "self") {
+            if let Some(module) = frame.name.split(['.', ':']).next() {
+                path[0] = module.to_string();
+            }
+        }
         let (args, method) = match last {
             Call::MethodCall(method) => {
                 path.push(token_name(method.name()));
                 (args_exprs(method.args()), true)
             }
             Call::AnonymousCall(args) => (args_exprs(args), false),
-            _ => return facts,
+            _ => return None,
         };
         if path.is_empty() || !self.config.is_guard(&path) {
-            return facts;
+            return None;
         }
-        // The module the guard is called on must not come from the client.
+        // The module the guard is called on must not come from the client,
+        // nor be chosen by it (`ClanRoles[clanId]:isModerator(player)`).
         if method || !init.is_empty() {
+            if self.client_chosen(frame, state, &init) {
+                return None;
+            }
             let receiver = self.peek_suffixed(frame, state, prefix, &init);
             if !receiver.deep_flows().is_empty() {
-                return facts;
+                return None;
             }
         }
         // The guard must test the sender (`player`, `player.UserId`,
         // `player.Name`), not a player, id or object chosen by the client or
         // reached from the sender (`player.DisplayName`, `player.Plot.Value`).
         // Other arguments must be constants (`hasPermission(player, "Ban")`).
-        let mut on_sender = false;
+        let mut sender = None;
         for e in &args {
             match self.sender_arg(frame, state, e) {
-                Some(sender) => on_sender |= sender,
-                None => return facts,
+                Some(true) => sender = Some(self.root_var(frame, e)),
+                Some(false) => {}
+                None => return None,
             }
         }
-        if !on_sender {
-            return facts;
+        sender
+    }
+
+    /// A bracket index in `suffixes` whose key comes from the client
+    /// (`clanAdmins[clanId]`, `Permissions.scopes[scope]`).
+    fn client_chosen(
+        &mut self,
+        frame: &mut Frame<'a>,
+        state: &mut State<'a>,
+        suffixes: &[&'a Suffix],
+    ) -> bool {
+        suffixes.iter().any(|s| match s {
+            Suffix::Index(Index::Brackets { expression, .. }) => {
+                !self.peek(frame, state, expression).deep_flows().is_empty()
+            }
+            _ => false,
+        })
+    }
+
+    /// The variable an expression starts from (`player` in `player.UserId`).
+    fn root_var(&self, frame: &Frame<'a>, expr: &'a Expression) -> Option<VarId> {
+        let name = match unwrap_expr(expr) {
+            Expression::Var(Var::Name(t)) => token_name(t),
+            Expression::Var(Var::Expression(var)) => match var.prefix() {
+                Prefix::Name(t) => token_name(t),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        frame.lookup(&name)
+    }
+
+    /// `ADMINS[player.UserId]` (truthy): the sender is in a server table
+    /// named like a permission list.
+    pub(crate) fn list_guard(
+        &mut self,
+        frame: &mut Frame<'a>,
+        state: &mut State<'a>,
+        expr: &'a Expression,
+    ) -> Facts {
+        let Expression::Var(Var::Expression(var)) = unwrap_expr(expr) else {
+            return Facts::default();
+        };
+        let suffixes: Vec<&'a Suffix> = var.suffixes().collect();
+        let Some((Suffix::Index(Index::Brackets { expression, .. }), init)) = suffixes.split_last()
+        else {
+            return Facts::default();
+        };
+        let Some(list) = self.permission_list(frame, state, var.prefix(), init) else {
+            return Facts::default();
+        };
+        if self.sender_arg(frame, state, expression) != Some(true) {
+            return Facts::default();
         }
-        self.privilege(state, super::compact(call))
+        let sender = self.root_var(frame, expression);
+        self.privilege_by(state, super::compact(unwrap_expr(expr)), sender, list)
     }
 
     /// `table.find(ADMIN_IDS, player.UserId)`: the sender is in a server list
@@ -1291,41 +1432,66 @@ impl<'a> Analyzer<'a> {
         let is_find = token_name(t) == "table"
             && matches!(init.as_slice(), [Suffix::Index(Index::Dot { name, .. })] if token_name(name) == "find");
         let args = args_exprs(args);
-        match (is_find, args.as_slice()) {
-            (true, [list, item]) if self.admin_list(frame, state, list) => {
-                if self.sender_arg(frame, state, item) == Some(true) {
-                    return self.privilege(state, super::compact(call));
-                }
-                Facts::default()
+        let (true, [list, item]) = (is_find, args.as_slice()) else {
+            return Facts::default();
+        };
+        let list_id = match unwrap_expr(list) {
+            Expression::Var(Var::Expression(var)) => {
+                let suffixes: Vec<&'a Suffix> = var.suffixes().collect();
+                self.permission_list(frame, state, var.prefix(), &suffixes)
             }
-            _ => Facts::default(),
+            Expression::Var(Var::Name(token)) => {
+                let name = token_name(token);
+                let named = permission_named(&name);
+                let value = self.peek(frame, state, list);
+                (named && self.config.default_guards && value.deep_flows().is_empty()).then(|| {
+                    let root = frame
+                        .lookup(&name)
+                        .unwrap_or_else(|| super::global_id(frame.file, &name));
+                    Some((root, Vec::new()))
+                })
+            }
+            _ => None,
+        };
+        let Some(list_id) = list_id else {
+            return Facts::default();
+        };
+        if self.sender_arg(frame, state, item) != Some(true) {
+            return Facts::default();
         }
+        let sender = self.root_var(frame, item);
+        self.privilege_by(state, super::compact(call), sender, list_id)
     }
 
-    /// A server table or list named like a permission list (`ADMINS`,
-    /// `Config.Moderators`, `whitelist`).
-    fn admin_list(
+    /// A server table named like a permission list (`ADMINS`,
+    /// `Config.Moderators`), not chosen by the client: its identity (root
+    /// variable and field path, when known), or `None`. Off with
+    /// `[guards] defaults = false`.
+    fn permission_list(
         &mut self,
         frame: &mut Frame<'a>,
         state: &mut State<'a>,
-        expr: &'a Expression,
-    ) -> bool {
-        let text = super::compact(unwrap_expr(expr)).to_ascii_lowercase();
-        let named = [
-            "admin",
-            "moder",
-            "staff",
-            "owner",
-            "whitelist",
-            "developer",
-            "permission",
-        ]
-        .iter()
-        .any(|w| text.contains(w));
-        named && self.peek(frame, state, expr).deep_flows().is_empty()
+        prefix: &'a Prefix,
+        suffixes: &[&'a Suffix],
+    ) -> Option<Option<TableId>> {
+        if !self.config.default_guards {
+            return None;
+        }
+        let mut text = super::compact(prefix);
+        for s in suffixes {
+            text.push_str(&super::compact(*s));
+        }
+        if !permission_named(&text) || self.client_chosen(frame, state, suffixes) {
+            return None;
+        }
+        let base = self.peek_suffixed(frame, state, prefix, suffixes);
+        if !base.deep_flows().is_empty() {
+            return None;
+        }
+        Some(self.static_path(frame, prefix, suffixes))
     }
 
-    /// `Some(true)` when `expr` is the sender (`player`, `player.UserId`,
+    /// `true` when `expr` is the sender (`player`, `player.UserId`,
     /// `player.Name`), `Some(false)` for a constant, `None` otherwise.
     fn sender_arg(
         &mut self,
@@ -1385,8 +1551,28 @@ impl<'a> Analyzer<'a> {
         facts
     }
 
+    /// `privilege`, remembering which player passed the check (for
+    /// `player.Chatted` listeners) and the permission list it used (a list
+    /// the client can write to is no proof: see `Analyzer::finish`).
+    fn privilege_by(
+        &mut self,
+        state: &State<'a>,
+        text: String,
+        sender: Option<VarId>,
+        list: Option<TableId>,
+    ) -> Facts {
+        self.guard_sender = sender;
+        if let Some(list) = list {
+            self.guard_lists.entry(text.clone()).or_default().push(list);
+        }
+        self.privilege(state, text)
+    }
+
     /// Permission checks written inline: `player.UserId == game.CreatorId`,
-    /// `player.UserId == 12345`, `player:GetRankInGroup(GROUP) >= 250`.
+    /// `player.UserId == 12345`, `player:GetRankInGroup(GROUP) >= 250`, and
+    /// permission levels compared with a guard function
+    /// (`getAdminLevel(player) >= 2`). Off with `[guards] defaults = false`,
+    /// except for configured guard functions.
     fn inline_admin_compare(
         &mut self,
         frame: &mut Frame<'a>,
@@ -1395,54 +1581,181 @@ impl<'a> Analyzer<'a> {
         cmp: Cmp,
         rhs: &'a Expression,
     ) -> Option<Refinement> {
-        let text = || {
+        // The check as it passes: `player.UserId ~= game.CreatorId` rejects,
+        // `player.UserId == game.CreatorId` is what admins pass.
+        let text = |passes_when_true: bool| {
+            let shown = if passes_when_true { cmp } else { cmp.negate() };
             format!(
                 "{} {} {}",
                 super::compact(lhs),
-                cmp.symbol(),
+                shown.symbol(),
                 super::compact(rhs)
             )
         };
-        // `GetRankInGroup(G) >= N` (or `N <= GetRankInGroup(G)`).
-        let rank = |e: &'a Expression| -> Option<&'a FunctionCall> {
+        // The call behind a side: written there, or held by a local
+        // (`local rank = player:GetRankInGroup(GROUP)`).
+        let call_of = |this: &mut Self, frame: &Frame<'a>, state: &State<'a>, e: &'a Expression| {
             match unwrap_expr(e) {
-                Expression::FunctionCall(call) => match split_call(call) {
-                    Some((_, _, Call::MethodCall(m)))
-                        if token_name(m.name()) == "GetRankInGroup" =>
-                    {
-                        Some(call)
+                Expression::FunctionCall(call) => Some(call),
+                Expression::Var(Var::Name(token)) => {
+                    let id = frame.lookup(&token_name(token))?;
+                    let _ = this;
+                    match state.vars.get(&id)?.defined_by.map(unwrap_expr) {
+                        Some(Expression::FunctionCall(call)) => Some(call),
+                        _ => None,
                     }
-                    _ => None,
-                },
+                }
                 _ => None,
             }
         };
-        let rank_side = match (rank(lhs), rank(rhs)) {
-            (Some(call), None) => Some((call, cmp)),
-            (None, Some(call)) => Some((call, cmp.flip())),
-            _ => None,
+        // `GetRankInGroup(G) >= N` (or `N <= GetRankInGroup(G)`), or a
+        // permission level returned by a guard function.
+        let level = |this: &mut Self,
+                     frame: &mut Frame<'a>,
+                     state: &mut State<'a>,
+                     e: &'a Expression|
+         -> Option<(Option<VarId>, i64)> {
+            let call = call_of(this, frame, state, e)?;
+            if let Some((prefix, init, Call::MethodCall(m))) = split_call(call) {
+                if token_name(m.name()) == "GetRankInGroup" && this.config.default_guards {
+                    let receiver = this.peek_suffixed(frame, state, prefix, &init);
+                    if receiver.class() != Some(&ObjClass::Player)
+                        || !receiver.deep_flows().is_empty()
+                    {
+                        return None;
+                    }
+                    // The group must be a constant: a group the client
+                    // names proves nothing.
+                    let args = args_exprs(m.args());
+                    let [group] = args.as_slice() else {
+                        return None;
+                    };
+                    let group = this.peek(frame, state, group);
+                    if !matches!(group.kind, Kind::Number(Some(_))) || group.is_tainted() {
+                        return None;
+                    }
+                    // Rank 1 is any member of the group, 0 anybody.
+                    let sender = match prefix {
+                        Prefix::Name(t) => frame.lookup(&token_name(t)),
+                        _ => None,
+                    };
+                    return Some((sender, 2));
+                }
+            }
+            // `getAdminLevel(player) >= 1`: level 0 is everybody.
+            let sender = this.guard_call(frame, state, call)?;
+            Some((sender, 1))
         };
-        if let Some((call, cmp)) = rank_side {
-            let (prefix, init, _) = split_call(call)?;
-            let receiver = self.peek_suffixed(frame, state, prefix, &init);
-            if receiver.class() != Some(&ObjClass::Player) || !receiver.deep_flows().is_empty() {
+        let side = match level(self, frame, state, lhs) {
+            Some(l) => Some((l, cmp, rhs)),
+            None => level(self, frame, state, rhs).map(|l| (l, cmp.flip(), lhs)),
+        };
+        if let Some(((sender, minimum), cmp, other)) = side {
+            // The threshold must be a server value: a constant, or a field
+            // of a server table (`command.rank`).
+            let threshold = self.peek(frame, state, other);
+            if !threshold.deep_flows().is_empty() {
                 return None;
             }
-            let facts = self.privilege(state, text());
-            return match cmp {
-                Cmp::Ge | Cmp::Gt => Some(Refinement {
+            let n = match threshold.kind {
+                Kind::Number(Some(n)) => Some(n),
+                Kind::Number(None) | Kind::Unknown if minimum == 1 => None,
+                _ => return None,
+            };
+            // The lowest level that passes, on the branch that passes.
+            let (passing, on_true) = match cmp {
+                Cmp::Ge => (n, true),
+                Cmp::Gt => (n.map(|n| n.floor() + 1.0), true),
+                Cmp::Eq => (n, true),
+                Cmp::Lt => (n, false),
+                Cmp::Le => (n.map(|n| n.floor() + 1.0), false),
+                Cmp::Ne => (n, false),
+            };
+            if passing.is_some_and(|p| p < minimum as f64) {
+                return None;
+            }
+            // `cmp` is normalised to the level on the left: the written
+            // comparison passes on the same branch.
+            let facts = self.privilege_by(state, text(on_true), sender, None);
+            return Some(if on_true {
+                Refinement {
                     on_true: facts,
                     on_false: Facts::default(),
-                }),
-                Cmp::Lt | Cmp::Le => Some(Refinement {
+                }
+            } else {
+                Refinement {
                     on_true: Facts::default(),
                     on_false: facts,
-                }),
-                _ => None,
-            };
+                }
+            });
         }
-        if !matches!(cmp, Cmp::Eq | Cmp::Ne) {
+        if !matches!(cmp, Cmp::Eq | Cmp::Ne) || !self.config.default_guards {
             return None;
+        }
+        // `player:GetRoleInGroup(GROUP) == "Admin"`: a staff role of a
+        // constant group.
+        let role = |this: &mut Self,
+                    frame: &mut Frame<'a>,
+                    state: &mut State<'a>,
+                    e: &'a Expression,
+                    other: &'a Expression|
+         -> Option<Option<VarId>> {
+            let call = call_of(this, frame, state, e)?;
+            let (prefix, init, Call::MethodCall(m)) = split_call(call)? else {
+                return None;
+            };
+            if token_name(m.name()) != "GetRoleInGroup" {
+                return None;
+            }
+            let receiver = this.peek_suffixed(frame, state, prefix, &init);
+            let args = args_exprs(m.args());
+            let [group] = args.as_slice() else {
+                return None;
+            };
+            let group = this.peek(frame, state, group);
+            let name = this.peek(frame, state, other);
+            let staff = name.str_const().is_some_and(|n| {
+                let n = n.to_ascii_lowercase();
+                [
+                    "owner",
+                    "admin",
+                    "moder",
+                    "staff",
+                    "developer",
+                    "creator",
+                    "founder",
+                ]
+                .iter()
+                .any(|w| n.contains(w))
+            });
+            let ok = receiver.class() == Some(&ObjClass::Player)
+                && receiver.deep_flows().is_empty()
+                && matches!(group.kind, Kind::Number(Some(_)))
+                && !group.is_tainted()
+                && staff
+                && !name.is_tainted();
+            ok.then(|| match prefix {
+                Prefix::Name(t) => frame.lookup(&token_name(t)),
+                _ => None,
+            })
+        };
+        let role_sender = match role(self, frame, state, lhs, rhs) {
+            Some(sender) => Some(sender),
+            None => role(self, frame, state, rhs, lhs),
+        };
+        if let Some(sender) = role_sender {
+            let facts = self.privilege_by(state, text(cmp == Cmp::Eq), sender, None);
+            return Some(if cmp == Cmp::Eq {
+                Refinement {
+                    on_true: facts,
+                    on_false: Facts::default(),
+                }
+            } else {
+                Refinement {
+                    on_true: Facts::default(),
+                    on_false: facts,
+                }
+            });
         }
         // `player.UserId == game.CreatorId` / `== 12345`.
         let owner_id =
@@ -1453,13 +1766,14 @@ impl<'a> Analyzer<'a> {
                 let v = this.peek(frame, state, e);
                 matches!(v.kind, Kind::Number(Some(_))) && v.deep_flows().is_empty()
             };
-        let matches_owner = (self.sender_id(frame, state, lhs)
-            && owner_id(self, frame, state, rhs))
-            || (self.sender_id(frame, state, rhs) && owner_id(self, frame, state, lhs));
-        if !matches_owner {
+        let sender = if self.sender_id(frame, state, lhs) && owner_id(self, frame, state, rhs) {
+            self.root_var(frame, lhs)
+        } else if self.sender_id(frame, state, rhs) && owner_id(self, frame, state, lhs) {
+            self.root_var(frame, rhs)
+        } else {
             return None;
-        }
-        let facts = self.privilege(state, text());
+        };
+        let facts = self.privilege_by(state, text(cmp == Cmp::Eq), sender, None);
         Some(if cmp == Cmp::Eq {
             Refinement {
                 on_true: facts,
@@ -1511,7 +1825,8 @@ impl<'a> Analyzer<'a> {
                             for s in &init {
                                 recv_text.push_str(&super::compact(*s));
                             }
-                            self.pending_lock_reads.push(format!("{recv_text}@{attr}"));
+                            self.pending_lock_reads
+                                .push(format!("{}@{attr}", declared_text(frame, &recv_text)));
                         }
                     }
                     "HasTag" => {
@@ -1565,12 +1880,14 @@ impl<'a> Analyzer<'a> {
                                         if let Some(summary) =
                                             self.summary_of(&closure, state, true)
                                         {
+                                            let clients = self.client_args(frame, state, &args);
                                             for (i, e) in args.iter().enumerate() {
                                                 if let (Some(t), Some(c)) = (
                                                     self.target_of(frame, e),
                                                     summary.truthy.get(i + 1),
                                                 ) {
-                                                    on_true.add(t, *c);
+                                                    on_true
+                                                        .add(t, relative_checks(&clients, i, *c));
                                                 }
                                             }
                                         }
@@ -1620,7 +1937,10 @@ impl<'a> Analyzer<'a> {
                                     {
                                         self.pending_lock_reads.push(format!(
                                             "{}@find",
-                                            super::compact(unwrap_expr(list))
+                                            declared_text(
+                                                frame,
+                                                &super::compact(unwrap_expr(list))
+                                            )
                                         ));
                                     }
                                     if let (Some(list), Some(item)) = (args.first(), args.get(1)) {
@@ -1658,12 +1978,13 @@ impl<'a> Analyzer<'a> {
                                     let closure = closure.clone();
                                     if let Some(summary) = self.summary_of(&closure, state, true) {
                                         let offset = usize::from(closure.is_method);
+                                        let clients = self.client_args(frame, state, &args);
                                         for (i, e) in args.iter().enumerate() {
                                             if let (Some(t), Some(c)) = (
                                                 self.target_of(frame, e),
                                                 summary.truthy.get(i + offset),
                                             ) {
-                                                on_true.add(t, *c);
+                                                on_true.add(t, relative_checks(&clients, i, *c));
                                             }
                                         }
                                     }
@@ -1728,6 +2049,19 @@ impl<'a> Analyzer<'a> {
             }
         }
         facts
+    }
+
+    /// Which call arguments are client data that can act as a bound (see
+    /// `relative_checks`).
+    fn client_args(
+        &mut self,
+        frame: &mut Frame<'a>,
+        state: &mut State<'a>,
+        args: &[&'a Expression],
+    ) -> Vec<bool> {
+        args.iter()
+            .map(|e| client_bound(&self.peek(frame, state, e)))
+            .collect()
     }
 
     fn peek_suffixed(

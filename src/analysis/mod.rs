@@ -186,6 +186,8 @@ pub struct Analyzer<'a> {
     pending_lock_reads: Vec<String>,
     /// Nesting of `if` branches being executed (luau-shield007 messages).
     branch_depth: u32,
+    /// Nesting of loops run once per field (see `exec_unrolled`).
+    unroll_depth: u32,
     /// The last permission guard (`Admins.isAdmin(player)`) seen in the
     /// current entry point, named in downgraded findings.
     guard: Option<String>,
@@ -236,6 +238,7 @@ impl<'a> Analyzer<'a> {
             condition_depth: 0,
             pending_lock_reads: Vec::new(),
             branch_depth: 0,
+            unroll_depth: 0,
             guard: None,
             budget: ENTRY_BUDGET,
             pending: Vec::new(),
@@ -448,6 +451,7 @@ impl<'a> Analyzer<'a> {
             self.budget = ENTRY_BUDGET;
             self.guard = None;
             self.branch_depth = 0;
+            self.unroll_depth = 0;
             let mut state = base.clone();
             let (args, rest) = args;
             self.call_closure(

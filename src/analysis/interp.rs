@@ -239,6 +239,9 @@ pub(crate) fn is_falsy_literal(expr: &Expression) -> bool {
 
 /// Most fields of a table iterated one by one (see `exec_unrolled`).
 const MAX_UNROLLED_FIELDS: usize = 16;
+/// Loops nested deeper than this are not run once per field (the cost grows
+/// as fields^depth); they use the merged element instead.
+const MAX_UNROLL_NESTING: u32 = 2;
 
 /// The fields of the iterated collection, when every key is known: a server
 /// table with named fields only (not an array, not filled with dynamic keys,
@@ -691,8 +694,12 @@ impl<'a> Analyzer<'a> {
                 let exprs: Vec<&'a Expression> = stmt.expressions().iter().collect();
                 let collection = self.iteration_collection(frame, &mut state, &exprs);
                 let names: Vec<&'a TokenReference> = stmt.names().iter().collect();
-                if let Some(fields) = known_fields(&collection, &exprs) {
+                let fields = known_fields(&collection, &exprs)
+                    .filter(|_| self.unroll_depth < MAX_UNROLL_NESTING);
+                if let Some(fields) = fields {
+                    self.unroll_depth += 1;
                     state = self.exec_unrolled(frame, state, stmt.block(), &names, fields);
+                    self.unroll_depth -= 1;
                 } else {
                     let (key, element) = self.iteration_values(&collection);
                     state =

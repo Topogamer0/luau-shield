@@ -40,7 +40,8 @@ pub fn missing(kind: SinkKind, flow: &Flow) -> Option<String> {
         SinkKind::Economy => {
             if flow.has(check::TYPE_BOOLEAN)
                 || flow.has(check::LOWER | check::UPPER | check::NAN_SAFE)
-                || (flow.has(check::TYPE_STRING) && flow.any(check::LENGTH | check::PATTERN))
+                || flow.any(check::PATTERN)
+                || (flow.any(check::TYPE_STRING | check::TYPE_OTHER) && flow.has(check::LENGTH))
             {
                 return None;
             }
@@ -121,7 +122,7 @@ pub fn missing(kind: SinkKind, flow: &Flow) -> Option<String> {
                     | check::TYPE_NUMBER
                     | check::TYPE_BOOLEAN
                     | check::FILTERED,
-            ) || (flow.has(check::TYPE_STRING) && flow.any(check::LENGTH))
+            ) || (flow.any(check::TYPE_STRING | check::TYPE_OTHER) && flow.has(check::LENGTH))
             {
                 return None;
             }
@@ -277,6 +278,10 @@ mod tests {
         assert!(missing(SinkKind::Economy, &flow(check::BOUNDS | check::NAN_SAFE)).is_none());
         assert!(missing(SinkKind::Economy, &flow(check::ALLOWLIST)).is_none());
         assert!(missing(SinkKind::Economy, &flow(check::TYPE_BOOLEAN)).is_none());
+        // Custom sanitizers declared with checks = ["type", "length"] or ["pattern"].
+        assert!(missing(SinkKind::Economy, &flow(check::TYPE_OTHER | check::LENGTH)).is_none());
+        assert!(missing(SinkKind::Economy, &flow(check::PATTERN)).is_none());
+        assert!(missing(SinkKind::Economy, &flow(check::LENGTH)).is_some());
         let none = missing(SinkKind::Economy, &flow(0)).unwrap();
         assert!(none.contains("type check") && none.contains("upper bound"));
     }

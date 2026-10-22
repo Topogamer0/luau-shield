@@ -16,7 +16,7 @@ game:GetService("Players").PlayerAdded:Connect(function(player: Player)
 	setting.Changed:Connect(function(value: number)
 		local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 		if humanoid then
-			humanoid.WalkSpeed = value -- expect: LS002
+			humanoid.WalkSpeed = value -- expect: luau-shield002
 		end
 	end)
 end)

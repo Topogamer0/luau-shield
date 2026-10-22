@@ -8,5 +8,5 @@ ReplicatedStorage.Remotes.Deposit.OnServerEvent:Connect(function(player: Player,
 	local pending = { amount = 0 }
 	local entry = pending
 	entry.amount = amount
-	player.leaderstats.Coins.Value += pending.amount -- expect: LS001
+	player.leaderstats.Coins.Value += pending.amount -- expect: luau-shield001
 end)

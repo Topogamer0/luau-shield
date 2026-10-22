@@ -80,7 +80,7 @@ remote.OnServerEvent:Connect(function(player: Player, amount: number?, label: st
 end)
 "#;
     let findings = run(&[("Give.server.luau", code)]);
-    assert_eq!(findings, ["Give.server.luau:23:LS001"]);
+    assert_eq!(findings, ["Give.server.luau:23:luau-shield001"]);
 }
 
 #[test]
@@ -100,7 +100,10 @@ end)
 "#;
     assert_eq!(
         run(&[("s.server.luau", code)]),
-        ["s.server.luau:4:LS001", "s.server.luau:10:LS001"]
+        [
+            "s.server.luau:4:luau-shield001",
+            "s.server.luau:10:luau-shield001"
+        ]
     );
 }
 
@@ -169,8 +172,8 @@ return {
     assert_eq!(
         findings,
         [
-            "src/server/Economy.luau:4:LS001",
-            "src/server/Util.luau:9:LS001"
+            "src/server/Economy.luau:4:luau-shield001",
+            "src/server/Util.luau:9:luau-shield001"
         ]
     );
 }
@@ -195,7 +198,7 @@ end)
             ("server/Helper.luau", helper),
             ("server/Main.server.luau", main)
         ]),
-        ["server/Helper.luau:4:LS004"]
+        ["server/Helper.luau:4:luau-shield004"]
     );
 }
 
@@ -211,7 +214,7 @@ return ShopService
 "#;
     assert_eq!(
         run(&[("server/ShopService.luau", code)]),
-        ["server/ShopService.luau:5:LS001"]
+        ["server/ShopService.luau:5:luau-shield001"]
     );
 }
 
@@ -231,24 +234,31 @@ ReplicatedStorage.Remotes.B.OnServerEvent:Connect(function(player, item, qty)
 	player.leaderstats.Coins.Value -= qty
 end)
 "#;
-    assert_eq!(run(&[("s.server.luau", code)]), ["s.server.luau:8:LS001"]);
+    assert_eq!(
+        run(&[("s.server.luau", code)]),
+        ["s.server.luau:8:luau-shield001"]
+    );
 }
 
 #[test]
 fn suppressions_and_config() {
     let code = r#"
 game.ReplicatedStorage.A.OnServerEvent:Connect(function(player, n)
-	player.leaderstats.Coins.Value += n -- luau-shield-ignore: LS001 audited
-	-- luau-shield-ignore: LS002 teleport pads are trusted here
+	player.leaderstats.Coins.Value += n -- luau-shield-ignore: luau-shield001 audited
+	-- luau-shield-ignore: luau-shield002 teleport pads are trusted here
 	player.Character.HumanoidRootPart.CFrame = n
 	player.Character.Humanoid.WalkSpeed = n
 end)
 "#;
-    assert_eq!(run(&[("s.server.luau", code)]), ["s.server.luau:6:LS002"]);
-    let mut config = Config::from_toml("[rules]\nLS002 = \"off\"", Path::new(".")).unwrap();
+    assert_eq!(
+        run(&[("s.server.luau", code)]),
+        ["s.server.luau:6:luau-shield002"]
+    );
+    let mut config =
+        Config::from_toml("[rules]\nluau-shield002 = \"off\"", Path::new(".")).unwrap();
     assert!(run_with(&[("s.server.luau", code)], &config).is_empty());
     config = Config::from_toml(
-        "[[sinks]]\nfunction = \"Economy.add\"\nrule = \"LS001\"\narguments = [2]\n[[sanitizers]]\nfunction = \"Guard.amount\"",
+        "[[sinks]]\nfunction = \"Economy.add\"\nrule = \"luau-shield001\"\narguments = [2]\n[[sanitizers]]\nfunction = \"Guard.amount\"",
         Path::new("."),
     )
     .unwrap();
@@ -265,7 +275,7 @@ end)
 "#;
     assert_eq!(
         run_with(&[("c.server.luau", custom)], &config),
-        ["c.server.luau:5:LS001"]
+        ["c.server.luau:5:luau-shield001"]
     );
 }
 
@@ -283,7 +293,7 @@ local WEBHOOK = "https://discord.com/api/webhooks/123456789012345678/abcdefghijk
 "#;
     assert_eq!(
         run(&[("ui.client.luau", client), ("log.server.luau", server)]),
-        ["ui.client.luau:6:LS008"]
+        ["ui.client.luau:6:luau-shield008"]
     );
 }
 
@@ -312,7 +322,10 @@ end)
 "#;
     assert_eq!(
         run(&[("s.server.luau", code)]),
-        ["s.server.luau:5:LS003", "s.server.luau:18:LS003"]
+        [
+            "s.server.luau:5:luau-shield003",
+            "s.server.luau:18:luau-shield003"
+        ]
     );
 }
 
@@ -348,9 +361,9 @@ end)
     assert_eq!(
         run(&[("s.server.luau", code)]),
         [
-            "s.server.luau:4:LS007",
-            "s.server.luau:21:LS006",
-            "s.server.luau:22:LS001"
+            "s.server.luau:4:luau-shield007",
+            "s.server.luau:21:luau-shield006",
+            "s.server.luau:22:luau-shield001"
         ]
     );
 }
@@ -382,10 +395,10 @@ end)
     assert_eq!(
         run(&[("s.server.luau", code)]),
         [
-            "s.server.luau:9:LS005",
-            "s.server.luau:10:LS005",
-            "s.server.luau:16:LS007",
-            "s.server.luau:18:LS002"
+            "s.server.luau:9:luau-shield005",
+            "s.server.luau:10:luau-shield005",
+            "s.server.luau:16:luau-shield007",
+            "s.server.luau:18:luau-shield002"
         ]
     );
 }
@@ -417,9 +430,9 @@ end)
     assert_eq!(
         run(&[("s.server.luau", code)]),
         [
-            "s.server.luau:5:LS001",
-            "s.server.luau:15:LS001",
-            "s.server.luau:20:LS004"
+            "s.server.luau:5:luau-shield001",
+            "s.server.luau:15:luau-shield001",
+            "s.server.luau:20:luau-shield004"
         ]
     );
 }
@@ -436,7 +449,10 @@ Players.PlayerAdded:Connect(function(player)
 	end)
 end)
 "#;
-    assert_eq!(run(&[("s.server.luau", code)]), ["s.server.luau:6:LS004"]);
+    assert_eq!(
+        run(&[("s.server.luau", code)]),
+        ["s.server.luau:6:luau-shield004"]
+    );
 }
 
 #[test]
@@ -485,5 +501,8 @@ Remotes.Deposit.OnServerEvent:Connect(function(player, amount)
 	shop:SafeDeposit(amount)
 end)
 "#;
-    assert_eq!(run(&[("s.server.luau", code)]), ["s.server.luau:12:LS001"]);
+    assert_eq!(
+        run(&[("s.server.luau", code)]),
+        ["s.server.luau:12:luau-shield001"]
+    );
 }

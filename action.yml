@@ -70,7 +70,7 @@ inputs:
   args:
     description: >-
       Extra arguments for both `luau-shield check` runs, separated by
-      whitespace (for example "--disable LS007"). Do not pass --format,
+      whitespace (for example "--disable luau-shield007"). Do not pass --format,
       --output or --fail-on here.
     required: false
     default: ""

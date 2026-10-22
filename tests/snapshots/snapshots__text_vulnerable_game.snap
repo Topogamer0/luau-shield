@@ -2,7 +2,7 @@
 source: tests/snapshots.rs
 expression: "report::text::render(&report, false, false)"
 ---
-critical[LS004]: Client-controlled value reaches loadstring/require
+critical[luau-shield004]: Client-controlled value reaches loadstring/require
   --> examples/vulnerable-game/src/server/AdminConsole.server.luau:23:21
    |
 22 |     end
@@ -22,9 +22,9 @@ critical[LS004]: Client-controlled value reaches loadstring/require
    = fix: Only an allow-list can make code execution safe. Never run code or require modules
            chosen by the client. Dispatch commands through a server-side table of allowed functions
            (`Commands[name]`) and validate the name against it.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS004.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield004.md
 
-critical[LS004]: Client-controlled value reaches loadstring/require
+critical[luau-shield004]: Client-controlled value reaches loadstring/require
   --> examples/vulnerable-game/src/server/AdminConsole.server.luau:39:19
    |
 38 |         if command == "plugin" then
@@ -44,9 +44,9 @@ critical[LS004]: Client-controlled value reaches loadstring/require
    = fix: Only an allow-list can make code execution safe. Never run code or require modules
            chosen by the client. Dispatch commands through a server-side table of allowed functions
            (`Commands[name]`) and validate the name against it.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS004.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield004.md
 
-high[LS002]: Client-controlled value assigned to a sensitive Instance property
+high[luau-shield002]: Client-controlled value assigned to a sensitive Instance property
   --> examples/vulnerable-game/src/server/CombatService.server.luau:30:9
    |
 29 |     end
@@ -67,9 +67,9 @@ high[LS002]: Client-controlled value assigned to a sensitive Instance property
            Compute the value on the server (from server-side stats, the character's real position,
            etc.). If it must come from the client, clamp it to a sensible range, check distances
            against the character, allow-list instances, and filter text with TextService.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS002.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield002.md
 
-high[LS003]: Instance sent by the client used without checking ownership or location
+high[luau-shield003]: Instance sent by the client used without checking ownership or location
   --> examples/vulnerable-game/src/server/CombatService.server.luau:30:9
    |
 29 |     end
@@ -91,9 +91,9 @@ high[LS003]: Instance sent by the client used without checking ownership or loca
            `inst:IsDescendantOf(player.Character)`, compare an `Owner` attribute with
            `player.UserId`, check the distance to the character, or look it up in a server-side
            list of allowed instances.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS003.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield003.md
 
-high[LS002]: Client-controlled value assigned to a sensitive Instance property
+high[luau-shield002]: Client-controlled value assigned to a sensitive Instance property
   --> examples/vulnerable-game/src/server/CombatService.server.luau:36:3
    |
 35 |     if humanoid then
@@ -114,9 +114,9 @@ high[LS002]: Client-controlled value assigned to a sensitive Instance property
            Compute the value on the server (from server-side stats, the character's real position,
            etc.). If it must come from the client, clamp it to a sensible range, check distances
            against the character, allow-list instances, and filter text with TextService.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS002.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield002.md
 
-high[LS002]: Client-controlled value assigned to a sensitive Instance property
+high[luau-shield002]: Client-controlled value assigned to a sensitive Instance property
   --> examples/vulnerable-game/src/server/CombatService.server.luau:48:2
    |
 47 |     lastBlink[player] = now
@@ -137,9 +137,9 @@ high[LS002]: Client-controlled value assigned to a sensitive Instance property
            Compute the value on the server (from server-side stats, the character's real position,
            etc.). If it must come from the client, clamp it to a sensible range, check distances
            against the character, allow-list instances, and filter text with TextService.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS002.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield002.md
 
-low[LS007]: Remote handler does expensive work without a rate limit
+low[luau-shield007]: Remote handler does expensive work without a rate limit
   --> examples/vulnerable-game/src/server/LobbyService.server.luau:15:38
    |
 14 | -- Launches a firework rocket above the player.
@@ -152,9 +152,9 @@ low[LS007]: Remote handler does expensive work without a rate limit
    = fix: Add a per-player cooldown (store `os.clock()` per player and return early when called
            too often), a busy flag while the previous request is running, or a shared rate limiter
            module.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS007.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield007.md
 
-low[LS007]: Remote handler does expensive work without a rate limit
+low[luau-shield007]: Remote handler does expensive work without a rate limit
   --> examples/vulnerable-game/src/server/LobbyService.server.luau:33:39
    |
 33 | Remotes.SubmitBugReport.OnServerEvent:Connect(function(player: Player, category: string, text: string)
@@ -166,9 +166,9 @@ low[LS007]: Remote handler does expensive work without a rate limit
    = fix: Add a per-player cooldown (store `os.clock()` per player and return early when called
            too often), a busy flag while the previous request is running, or a shared rate limiter
            module.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS007.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield007.md
 
-low[LS007]: Remote handler does expensive work without a rate limit
+low[luau-shield007]: Remote handler does expensive work without a rate limit
   --> examples/vulnerable-game/src/server/LobbyService.server.luau:37:34
    |
 37 | Remotes.TrackEvent.OnServerEvent:Connect(function(player: Player, eventName: string, properties: { [string]: any })
@@ -180,9 +180,9 @@ low[LS007]: Remote handler does expensive work without a rate limit
    = fix: Add a per-player cooldown (store `os.clock()` per player and return early when called
            too often), a busy flag while the previous request is running, or a shared rate limiter
            module.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS007.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield007.md
 
-high[LS005]: Client-controlled URL, headers or body in an HttpService request
+high[luau-shield005]: Client-controlled URL, headers or body in an HttpService request
   --> examples/vulnerable-game/src/server/Modules/Analytics.luau:19:14
    |
 18 |     })
@@ -208,9 +208,9 @@ high[LS005]: Client-controlled URL, headers or body in an HttpService request
            or encoded with HttpService:UrlEncode. Keep URLs on the server and choose them through
            an allow-listed key. Encode client values with `HttpService:UrlEncode`, convert ids with
            `tonumber`, limit the length of text and rate-limit the remote.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS005.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield005.md
 
-high[LS005]: Client-controlled URL, headers or body in an HttpService request
+high[luau-shield005]: Client-controlled URL, headers or body in an HttpService request
   --> examples/vulnerable-game/src/server/Modules/Analytics.luau:26:14
    |
 25 |     local body = HttpService:JSONEncode({ content = content })
@@ -238,9 +238,9 @@ high[LS005]: Client-controlled URL, headers or body in an HttpService request
            the server and choose them through an allow-listed key. Encode client values with
            `HttpService:UrlEncode`, convert ids with `tonumber`, limit the length of text and
            rate-limit the remote.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS005.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield005.md
 
-high[LS001]: Client-controlled value written to currency, stats or saved data
+high[luau-shield001]: Client-controlled value written to currency, stats or saved data
   --> examples/vulnerable-game/src/server/Modules/DataManager.luau:74:3
    |
 73 |     for key, value in changes do
@@ -267,9 +267,9 @@ high[LS001]: Client-controlled value written to currency, stats or saved data
            decide amounts (look prices and rewards up in a server table by an allow-listed id). If
            a number must come from the client, check `typeof(x) == "number"`, reject NaN (`x ~= x`)
            and check both bounds before using it. Never use client data as a DataStore key.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS001.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md
 
-high[LS001]: Client-controlled value written to currency, stats or saved data
+high[luau-shield001]: Client-controlled value written to currency, stats or saved data
   --> examples/vulnerable-game/src/server/Modules/DataManager.luau:76:16
    |
 75 |     end
@@ -293,9 +293,9 @@ high[LS001]: Client-controlled value written to currency, stats or saved data
            decide amounts (look prices and rewards up in a server table by an allow-listed id). If
            a number must come from the client, check `typeof(x) == "number"`, reject NaN (`x ~= x`)
            and check both bounds before using it. Never use client data as a DataStore key.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS001.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md
 
-high[LS001]: Client-controlled value written to currency, stats or saved data
+high[luau-shield001]: Client-controlled value written to currency, stats or saved data
   --> examples/vulnerable-game/src/server/Modules/Economy.luau:18:2
    |
 17 |     end
@@ -319,9 +319,9 @@ high[LS001]: Client-controlled value written to currency, stats or saved data
            rewards up in a server table by an allow-listed id). If a number must come from the
            client, check `typeof(x) == "number"`, reject NaN (`x ~= x`) and check both bounds
            before using it. Never use client data as a DataStore key.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS001.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md
 
-high[LS001]: Client-controlled value written to currency, stats or saved data
+high[luau-shield001]: Client-controlled value written to currency, stats or saved data
   --> examples/vulnerable-game/src/server/Modules/Economy.luau:21:3
    |
 20 |     if leaderstats then
@@ -345,9 +345,9 @@ high[LS001]: Client-controlled value written to currency, stats or saved data
            rewards up in a server table by an allow-listed id). If a number must come from the
            client, check `typeof(x) == "number"`, reject NaN (`x ~= x`) and check both bounds
            before using it. Never use client data as a DataStore key.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS001.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md
 
-high[LS001]: Client-controlled value written to currency, stats or saved data
+high[luau-shield001]: Client-controlled value written to currency, stats or saved data
   --> examples/vulnerable-game/src/server/Modules/Economy.luau:31:2
    |
 30 |     end
@@ -371,9 +371,9 @@ high[LS001]: Client-controlled value written to currency, stats or saved data
            rewards up in a server table by an allow-listed id). If a number must come from the
            client, check `typeof(x) == "number"`, reject NaN (`x ~= x`) and check both bounds
            before using it. Never use client data as a DataStore key.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS001.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md
 
-high[LS001]: Client-controlled value written to currency, stats or saved data
+high[luau-shield001]: Client-controlled value written to currency, stats or saved data
   --> examples/vulnerable-game/src/server/Modules/Economy.luau:34:3
    |
 33 |     if leaderstats then
@@ -397,9 +397,9 @@ high[LS001]: Client-controlled value written to currency, stats or saved data
            rewards up in a server table by an allow-listed id). If a number must come from the
            client, check `typeof(x) == "number"`, reject NaN (`x ~= x`) and check both bounds
            before using it. Never use client data as a DataStore key.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS001.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md
 
-low[LS007]: Remote handler does expensive work without a rate limit
+low[luau-shield007]: Remote handler does expensive work without a rate limit
   --> examples/vulnerable-game/src/server/PlayerData.server.luau:47:36
    |
 47 | Remotes.SaveSettings.OnServerEvent:Connect(function(player: Player, changes: { [string]: any })
@@ -411,9 +411,9 @@ low[LS007]: Remote handler does expensive work without a rate limit
    = fix: Add a per-player cooldown (store `os.clock()` per player and return early when called
            too often), a busy flag while the previous request is running, or a shared rate limiter
            module.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS007.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield007.md
 
-low[LS007]: Remote handler does expensive work without a rate limit
+low[luau-shield007]: Remote handler does expensive work without a rate limit
   --> examples/vulnerable-game/src/server/PlotService.server.luau:43:35
    |
 42 | -- CFrame of the preview when the player confirms.
@@ -426,9 +426,9 @@ low[LS007]: Remote handler does expensive work without a rate limit
    = fix: Add a per-player cooldown (store `os.clock()` per player and return early when called
            too often), a busy flag while the previous request is running, or a shared rate limiter
            module.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS007.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield007.md
 
-high[LS002]: Client-controlled value assigned to a sensitive Instance property
+high[luau-shield002]: Client-controlled value assigned to a sensitive Instance property
   --> examples/vulnerable-game/src/server/PlotService.server.luau:57:9
    |
 56 |     local object = template:Clone()
@@ -449,9 +449,9 @@ high[LS002]: Client-controlled value assigned to a sensitive Instance property
            Compute the value on the server (from server-side stats, the character's real position,
            etc.). If it must come from the client, clamp it to a sensible range, check distances
            against the character, allow-list instances, and filter text with TextService.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS002.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield002.md
 
-high[LS003]: Instance sent by the client used without checking ownership or location
+high[luau-shield003]: Instance sent by the client used without checking ownership or location
   --> examples/vulnerable-game/src/server/PlotService.server.luau:69:9
    |
 68 |     end
@@ -473,9 +473,9 @@ high[LS003]: Instance sent by the client used without checking ownership or loca
            `inst:IsDescendantOf(player.Character)`, compare an `Owner` attribute with
            `player.UserId`, check the distance to the character, or look it up in a server-side
            list of allowed instances.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS003.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield003.md
 
-low[LS007]: Remote handler does expensive work without a rate limit
+low[luau-shield007]: Remote handler does expensive work without a rate limit
   --> examples/vulnerable-game/src/server/ShopService.server.luau:35:31
    |
 34 | -- the player clicked; this saves a catalog lookup on the server.
@@ -488,9 +488,9 @@ low[LS007]: Remote handler does expensive work without a rate limit
    = fix: Add a per-player cooldown (store `os.clock()` per player and return early when called
            too often), a busy flag while the previous request is running, or a shared rate limiter
            module.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS007.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield007.md
 
-high[LS001]: Client-controlled value written to currency, stats or saved data
+high[luau-shield001]: Client-controlled value written to currency, stats or saved data
   --> examples/vulnerable-game/src/server/ShopService.server.luau:43:2
    |
 42 |     end
@@ -513,9 +513,9 @@ high[LS001]: Client-controlled value written to currency, stats or saved data
            decide amounts (look prices and rewards up in a server table by an allow-listed id). If
            a number must come from the client, check `typeof(x) == "number"`, reject NaN (`x ~= x`)
            and check both bounds before using it. Never use client data as a DataStore key.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS001.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md
 
-medium[LS006]: Server waits for a client with RemoteFunction:InvokeClient
+medium[luau-shield006]: Server waits for a client with RemoteFunction:InvokeClient
   --> examples/vulnerable-game/src/server/TradeService.server.luau:22:40
    |
 21 |     busy[target] = true
@@ -529,9 +529,9 @@ medium[LS006]: Server waits for a client with RemoteFunction:InvokeClient
    = fix: Use a RemoteEvent for the request and another for the reply (with a server-side
            timeout), or at least run the invoke in a detached thread (`task.spawn`) with a timeout
            and validate the returned values.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS006.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield006.md
 
-critical[LS008]: Secret hard-coded in code that replicates to clients
+critical[luau-shield008]: Secret hard-coded in code that replicates to clients
   --> examples/vulnerable-game/src/shared/Config.luau:44:26
    |
 43 | Config.AnalyticsUrl = "https://analytics.tycoonshop.example/v1"
@@ -543,9 +543,9 @@ critical[LS008]: Secret hard-coded in code that replicates to clients
            service behind it.
    = fix: Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox
            secrets (`HttpService:GetSecret`) and revoke the leaked credential.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS008.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield008.md
 
-critical[LS008]: Secret hard-coded in code that replicates to clients
+critical[luau-shield008]: Secret hard-coded in code that replicates to clients
   --> examples/vulnerable-game/src/shared/Config.luau:45:27
    |
 44 | Config.AnalyticsApiKey = "tsk_live_4f9a2c7e1b8d3f6a0c5e9b2d7a4f1c8e"
@@ -557,9 +557,9 @@ critical[LS008]: Secret hard-coded in code that replicates to clients
            service behind it.
    = fix: Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox
            secrets (`HttpService:GetSecret`) and revoke the leaked credential.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS008.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield008.md
 
-critical[LS008]: Secret hard-coded in code that replicates to clients
+critical[luau-shield008]: Secret hard-coded in code that replicates to clients
   --> examples/vulnerable-game/src/shared/Config.luau:46:24
    |
 45 | Config.BugReportWebhook = "https://discord.com/api/webhooks/1187362049571234816/qT7vXz2LmN9pRk4sYw8aBcDe5fGh1jK0lMnOpQrStUvWxYz3AbCdEfGhIjKlMnOp6Q"
@@ -571,6 +571,6 @@ critical[LS008]: Secret hard-coded in code that replicates to clients
            service behind it.
    = fix: Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox
            secrets (`HttpService:GetSecret`) and revoke the leaked credential.
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS008.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield008.md
 
 Found 27 problems (5 critical, 15 high, 1 medium, 6 low) in 15 files.

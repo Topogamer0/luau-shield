@@ -13,5 +13,5 @@ ReplicatedStorage.Remotes.ClaimReward.OnServerEvent:Connect(function(player: Pla
 end)
 
 rewardSignal.Event:Connect(function(player: Player, amount: number)
-	player.leaderstats.Coins.Value += amount -- expect: LS001
+	player.leaderstats.Coins.Value += amount -- expect: luau-shield001
 end)

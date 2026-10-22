@@ -6,23 +6,23 @@ use crate::analysis::value::{Flow, check};
 /// The kind of sensitive place untrusted data reaches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SinkKind {
-    /// Currency, stats, saved data, DataStore/MemoryStore (LS001).
+    /// Currency, stats, saved data, DataStore/MemoryStore (luau-shield001).
     Economy,
-    /// The key of a write into saved data or a DataStore (LS001).
+    /// The key of a write into saved data or a DataStore (luau-shield001).
     DataKey,
-    /// Numeric / vector / boolean Instance properties (LS002).
+    /// Numeric / vector / boolean Instance properties (luau-shield002).
     Property,
-    /// Instance-valued properties: Parent, Team, PrimaryPart... (LS002).
+    /// Instance-valued properties: Parent, Team, PrimaryPart... (luau-shield002).
     InstanceProperty,
-    /// Text shown to other players (LS002).
+    /// Text shown to other players (luau-shield002).
     Text,
-    /// Using an Instance chosen by the client (LS003).
+    /// Using an Instance chosen by the client (luau-shield003).
     InstanceUse,
-    /// loadstring / require (LS004).
+    /// loadstring / require (luau-shield004).
     Code,
-    /// URL of an HTTP request (LS005).
+    /// URL of an HTTP request (luau-shield005).
     HttpUrl,
-    /// Body or headers of an HTTP request (LS005).
+    /// Body or headers of an HTTP request (luau-shield005).
     HttpBody,
 }
 
@@ -141,7 +141,7 @@ fn join_list(items: &[&str]) -> String {
     }
 }
 
-/// Instance properties whose value must not come from the client (LS002).
+/// Instance properties whose value must not come from the client (luau-shield002).
 pub fn property_sink(name: &str) -> Option<SinkKind> {
     match name {
         "Position"
@@ -168,7 +168,7 @@ pub fn property_sink(name: &str) -> Option<SinkKind> {
     }
 }
 
-/// Instance methods whose first argument must not come from the client (LS002).
+/// Instance methods whose first argument must not come from the client (luau-shield002).
 pub fn method_sink(name: &str) -> bool {
     matches!(
         name,
@@ -183,7 +183,7 @@ pub fn method_sink(name: &str) -> bool {
     )
 }
 
-/// Methods that only read an Instance (using them is not an LS003).
+/// Methods that only read an Instance (using them is not a luau-shield003).
 pub fn is_query_method(name: &str) -> bool {
     matches!(
         name,

@@ -827,7 +827,7 @@ impl<'a> Analyzer<'a> {
                         );
                     }
                 }
-                // LS007 lock pattern: `busy[player] = true`.
+                // luau-shield007 lock pattern: `busy[player] = true`.
                 if let Key::Dynamic(key_value, _) = &key {
                     if key_value.player_rel {
                         if let Some(entry) = self.entry.as_mut() {

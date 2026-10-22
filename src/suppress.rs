@@ -1,10 +1,10 @@
 //! Inline suppressions:
 //!
 //! ```lua
-//! coins.Value += amount -- luau-shield-ignore: LS001 validated by the shop module
-//! -- luau-shield-ignore: LS003 doors are re-checked by DoorService
+//! coins.Value += amount -- luau-shield-ignore: luau-shield001 validated by the shop module
+//! -- luau-shield-ignore: luau-shield003 doors are re-checked by DoorService
 //! door:Destroy()
-//! -- luau-shield-ignore-file: LS007 this remote is rate limited by the gateway
+//! -- luau-shield-ignore-file: luau-shield007 this remote is rate limited by the gateway
 //! ```
 
 use crate::rules::RuleId;
@@ -167,8 +167,8 @@ mod tests {
     #[test]
     fn same_line_and_next_line() {
         let s = suppressions(
-            "local a = 1 -- luau-shield-ignore: LS001 reason here\n\
-             -- luau-shield-ignore: LS003, LS002 other reason\n\
+            "local a = 1 -- luau-shield-ignore: luau-shield001 reason here\n\
+             -- luau-shield-ignore: luau-shield003, luau-shield002 other reason\n\
              \n\
              local b = 2\n",
         );
@@ -181,7 +181,9 @@ mod tests {
 
     #[test]
     fn file_level() {
-        let s = suppressions("-- luau-shield-ignore-file: LS007 gateway limits it\nlocal x = 1\n");
+        let s = suppressions(
+            "-- luau-shield-ignore-file: luau-shield007 gateway limits it\nlocal x = 1\n",
+        );
         assert!(s.is_suppressed(RuleId::Ls007, 40));
         assert!(!s.is_suppressed(RuleId::Ls001, 2));
     }
@@ -195,7 +197,7 @@ mod tests {
 
     #[test]
     fn expect_markers_are_not_suppressions() {
-        let s = suppressions("local x = 1 -- expect: LS001\n");
+        let s = suppressions("local x = 1 -- expect: luau-shield001\n");
         assert!(s.malformed.is_empty());
         assert!(!s.is_suppressed(RuleId::Ls001, 1));
     }

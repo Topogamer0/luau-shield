@@ -79,12 +79,12 @@ expression: sarif
             "text": "`source` (client-controlled) is executed as code by `loadstring`. Only an allow-list can make code execution safe. Never run code or require modules chosen by the client. Dispatch commands through a server-side table of allowed functions (`Commands[name]`) and validate the name against it."
           },
           "partialFingerprints": {
-            "luauShield/v1": "6f478b4ccf3abae8"
+            "luauShield/v1": "79f21f345d8ab372"
           },
           "properties": {
             "severity": "critical"
           },
-          "ruleId": "LS004",
+          "ruleId": "luau-shield004",
           "ruleIndex": 3
         },
         {
@@ -170,12 +170,12 @@ expression: sarif
             "text": "`message` (client-controlled) is passed to `require`. Only an allow-list can make code execution safe. Never run code or require modules chosen by the client. Dispatch commands through a server-side table of allowed functions (`Commands[name]`) and validate the name against it."
           },
           "partialFingerprints": {
-            "luauShield/v1": "8efe102894759f52"
+            "luauShield/v1": "6c8cc00627668954"
           },
           "properties": {
             "severity": "critical"
           },
-          "ruleId": "LS004",
+          "ruleId": "luau-shield004",
           "ruleIndex": 3
         },
         {
@@ -244,12 +244,12 @@ expression: sarif
             "text": "`damage` (client-controlled) is passed to `target:TakeDamage()`. Missing: a lower bound and an upper bound (or a distance check against the character). Compute the value on the server (from server-side stats, the character's real position, etc.). If it must come from the client, clamp it to a sensible range, check distances against the character, allow-list instances, and filter text with TextService."
           },
           "partialFingerprints": {
-            "luauShield/v1": "ed57d70f5d55ec91"
+            "luauShield/v1": "aa9a3e96603a5e07"
           },
           "properties": {
             "severity": "high"
           },
-          "ruleId": "LS002",
+          "ruleId": "luau-shield002",
           "ruleIndex": 1
         },
         {
@@ -318,12 +318,12 @@ expression: sarif
             "text": "`target:TakeDamage()` is called on `target`, an Instance chosen by the client. A type check such as `IsA` only proves what kind of object it is, not that the player owns it or may use it. Verify ownership or location before using the Instance: `inst:IsDescendantOf(player.Character)`, compare an `Owner` attribute with `player.UserId`, check the distance to the character, or look it up in a server-side list of allowed instances."
           },
           "partialFingerprints": {
-            "luauShield/v1": "4edd58aa65718b40"
+            "luauShield/v1": "61208022ba5a9226"
           },
           "properties": {
             "severity": "high"
           },
-          "ruleId": "LS003",
+          "ruleId": "luau-shield003",
           "ruleIndex": 2
         },
         {
@@ -392,12 +392,12 @@ expression: sarif
             "text": "`speed` (client-controlled) is assigned to `humanoid.WalkSpeed`. Missing: a lower bound and an upper bound (or a distance check against the character). Compute the value on the server (from server-side stats, the character's real position, etc.). If it must come from the client, clamp it to a sensible range, check distances against the character, allow-list instances, and filter text with TextService."
           },
           "partialFingerprints": {
-            "luauShield/v1": "d6a8a1b0eef98efb"
+            "luauShield/v1": "238959e211f14c09"
           },
           "properties": {
             "severity": "high"
           },
-          "ruleId": "LS002",
+          "ruleId": "luau-shield002",
           "ruleIndex": 1
         },
         {
@@ -466,12 +466,12 @@ expression: sarif
             "text": "`targetPosition` (client-controlled) is assigned to `root.CFrame`. Missing: a lower bound and an upper bound (or a distance check against the character). Compute the value on the server (from server-side stats, the character's real position, etc.). If it must come from the client, clamp it to a sensible range, check distances against the character, allow-list instances, and filter text with TextService."
           },
           "partialFingerprints": {
-            "luauShield/v1": "04ac0880d6be0270"
+            "luauShield/v1": "14e773543b9a038e"
           },
           "properties": {
             "severity": "high"
           },
-          "ruleId": "LS002",
+          "ruleId": "luau-shield002",
           "ruleIndex": 1
         },
         {
@@ -496,12 +496,12 @@ expression: sarif
             "text": "the `Remotes.LaunchFirework.OnServerEvent` handler calls `Instance.new`, `effect:Clone()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
           },
           "partialFingerprints": {
-            "luauShield/v1": "6ffbc26e9c24107a"
+            "luauShield/v1": "19dcad6d27c077bc"
           },
           "properties": {
             "severity": "low"
           },
-          "ruleId": "LS007",
+          "ruleId": "luau-shield007",
           "ruleIndex": 6
         },
         {
@@ -526,12 +526,12 @@ expression: sarif
             "text": "the `Remotes.SubmitBugReport.OnServerEvent` handler calls `HttpService:PostAsync()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
           },
           "partialFingerprints": {
-            "luauShield/v1": "be066d9f3b64a98a"
+            "luauShield/v1": "0497d707f27b9880"
           },
           "properties": {
             "severity": "low"
           },
-          "ruleId": "LS007",
+          "ruleId": "luau-shield007",
           "ruleIndex": 6
         },
         {
@@ -556,12 +556,12 @@ expression: sarif
             "text": "the `Remotes.TrackEvent.OnServerEvent` handler calls `HttpService:PostAsync()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
           },
           "partialFingerprints": {
-            "luauShield/v1": "ad1a21e2c8a8991a"
+            "luauShield/v1": "f5ee31a94570a388"
           },
           "properties": {
             "severity": "low"
           },
-          "ruleId": "LS007",
+          "ruleId": "luau-shield007",
           "ruleIndex": 6
         },
         {
@@ -664,12 +664,12 @@ expression: sarif
             "text": "`url` (client-controlled, from `eventName`) is used in the URL of `HttpService:PostAsync()`. The value is not allow-listed, matched against a strict pattern, converted with tonumber or encoded with HttpService:UrlEncode. Keep URLs on the server and choose them through an allow-listed key. Encode client values with `HttpService:UrlEncode`, convert ids with `tonumber`, limit the length of text and rate-limit the remote."
           },
           "partialFingerprints": {
-            "luauShield/v1": "1697197e7cdc23a8"
+            "luauShield/v1": "a0984e75a80cb44e"
           },
           "properties": {
             "severity": "high"
           },
-          "ruleId": "LS005",
+          "ruleId": "luau-shield005",
           "ruleIndex": 4
         },
         {
@@ -789,12 +789,12 @@ expression: sarif
             "text": "`body` (client-controlled, from `category`) is sent in the body of `HttpService:PostAsync()`. The value is not type-checked and length-limited, filtered or allow-listed. Keep URLs on the server and choose them through an allow-listed key. Encode client values with `HttpService:UrlEncode`, convert ids with `tonumber`, limit the length of text and rate-limit the remote."
           },
           "partialFingerprints": {
-            "luauShield/v1": "bfda81c21d14eaf8"
+            "luauShield/v1": "b18a71d8c6eb4d62"
           },
           "properties": {
             "severity": "high"
           },
-          "ruleId": "LS005",
+          "ruleId": "luau-shield005",
           "ruleIndex": 4
         },
         {
@@ -897,12 +897,12 @@ expression: sarif
             "text": "`key` (client-controlled, from `changes`) chooses which entry of `profile` is written. The key is not checked against an allow-list (or a strict pattern): the client chooses which entry is written, for example `Coins` or another player's save. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
           },
           "partialFingerprints": {
-            "luauShield/v1": "4f990def33c0d054"
+            "luauShield/v1": "6c64be111d120dae"
           },
           "properties": {
             "severity": "high"
           },
-          "ruleId": "LS001",
+          "ruleId": "luau-shield001",
           "ruleIndex": 0
         },
         {
@@ -988,12 +988,12 @@ expression: sarif
             "text": "`changes` (client-controlled) is written by `settingsStore:SetAsync()`. Missing: a type check, a lower bound, an upper bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
           },
           "partialFingerprints": {
-            "luauShield/v1": "b5f4cd58368fe098"
+            "luauShield/v1": "28bc2e72bfef6fde"
           },
           "properties": {
             "severity": "high"
           },
-          "ruleId": "LS001",
+          "ruleId": "luau-shield001",
           "ruleIndex": 0
         },
         {
@@ -1079,12 +1079,12 @@ expression: sarif
             "text": "`coins` (client-controlled) is added to `profile.Coins`. Missing: a lower bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
           },
           "partialFingerprints": {
-            "luauShield/v1": "56b3efbc5dd75906"
+            "luauShield/v1": "d2be32cc317db06c"
           },
           "properties": {
             "severity": "high"
           },
-          "ruleId": "LS001",
+          "ruleId": "luau-shield001",
           "ruleIndex": 0
         },
         {
@@ -1170,12 +1170,12 @@ expression: sarif
             "text": "`coins` (client-controlled) is added to `leaderstats.Coins.Value`. Missing: a lower bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
           },
           "partialFingerprints": {
-            "luauShield/v1": "206ac5ea1889e084"
+            "luauShield/v1": "16af7524827f8e62"
           },
           "properties": {
             "severity": "high"
           },
-          "ruleId": "LS001",
+          "ruleId": "luau-shield001",
           "ruleIndex": 0
         },
         {
@@ -1261,12 +1261,12 @@ expression: sarif
             "text": "`price` (client-controlled) is subtracted from `profile.Coins`. Missing: a lower bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
           },
           "partialFingerprints": {
-            "luauShield/v1": "c4103c40ae5d3127"
+            "luauShield/v1": "1fdb0226d2503cad"
           },
           "properties": {
             "severity": "high"
           },
-          "ruleId": "LS001",
+          "ruleId": "luau-shield001",
           "ruleIndex": 0
         },
         {
@@ -1352,12 +1352,12 @@ expression: sarif
             "text": "`price` (client-controlled) is subtracted from `leaderstats.Coins.Value`. Missing: a lower bound and NaN rejection. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
           },
           "partialFingerprints": {
-            "luauShield/v1": "8035c0da8ae76745"
+            "luauShield/v1": "14f88a3813100c43"
           },
           "properties": {
             "severity": "high"
           },
-          "ruleId": "LS001",
+          "ruleId": "luau-shield001",
           "ruleIndex": 0
         },
         {
@@ -1382,12 +1382,12 @@ expression: sarif
             "text": "the `Remotes.SaveSettings.OnServerEvent` handler calls `settingsStore:SetAsync()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
           },
           "partialFingerprints": {
-            "luauShield/v1": "2fed66d57dc08b49"
+            "luauShield/v1": "f491808487096683"
           },
           "properties": {
             "severity": "low"
           },
-          "ruleId": "LS007",
+          "ruleId": "luau-shield007",
           "ruleIndex": 6
         },
         {
@@ -1412,12 +1412,12 @@ expression: sarif
             "text": "the `Remotes.PlaceObject.OnServerEvent` handler calls `template:Clone()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
           },
           "partialFingerprints": {
-            "luauShield/v1": "605feaf61e3622cb"
+            "luauShield/v1": "d36d0a8e874f7ea5"
           },
           "properties": {
             "severity": "low"
           },
-          "ruleId": "LS007",
+          "ruleId": "luau-shield007",
           "ruleIndex": 6
         },
         {
@@ -1486,12 +1486,12 @@ expression: sarif
             "text": "`cframe` (client-controlled) is passed to `object:PivotTo()`. Missing: a lower bound and an upper bound (or a distance check against the character). Compute the value on the server (from server-side stats, the character's real position, etc.). If it must come from the client, clamp it to a sensible range, check distances against the character, allow-list instances, and filter text with TextService."
           },
           "partialFingerprints": {
-            "luauShield/v1": "4fa484ebb04715ca"
+            "luauShield/v1": "05b3e9aca1289fd8"
           },
           "properties": {
             "severity": "high"
           },
-          "ruleId": "LS002",
+          "ruleId": "luau-shield002",
           "ruleIndex": 1
         },
         {
@@ -1560,12 +1560,12 @@ expression: sarif
             "text": "`object:Destroy()` is called on `object`, an Instance chosen by the client. A type check such as `IsA` only proves what kind of object it is, not that the player owns it or may use it. Verify ownership or location before using the Instance: `inst:IsDescendantOf(player.Character)`, compare an `Owner` attribute with `player.UserId`, check the distance to the character, or look it up in a server-side list of allowed instances."
           },
           "partialFingerprints": {
-            "luauShield/v1": "d678f78b4bd42866"
+            "luauShield/v1": "2a84f675e75af630"
           },
           "properties": {
             "severity": "high"
           },
-          "ruleId": "LS003",
+          "ruleId": "luau-shield003",
           "ruleIndex": 2
         },
         {
@@ -1590,12 +1590,12 @@ expression: sarif
             "text": "the `Remotes.BuyItem.OnServerEvent` handler calls `template:Clone()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
           },
           "partialFingerprints": {
-            "luauShield/v1": "56f5bd75dd73d939"
+            "luauShield/v1": "355c50412cfe8bd7"
           },
           "properties": {
             "severity": "low"
           },
-          "ruleId": "LS007",
+          "ruleId": "luau-shield007",
           "ruleIndex": 6
         },
         {
@@ -1664,12 +1664,12 @@ expression: sarif
             "text": "`itemId` (client-controlled) chooses which entry of `profile.Inventory` is written. The key is not checked against an allow-list (or a strict pattern): the client chooses which entry is written, for example `Coins` or another player's save. Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
           },
           "partialFingerprints": {
-            "luauShield/v1": "455732ca87dd4a7b"
+            "luauShield/v1": "aab75177c8b3a919"
           },
           "properties": {
             "severity": "high"
           },
-          "ruleId": "LS001",
+          "ruleId": "luau-shield001",
           "ruleIndex": 0
         },
         {
@@ -1694,12 +1694,12 @@ expression: sarif
             "text": "`Remotes.ConfirmTrade:InvokeClient()` makes the server wait for an answer from a client, which may never come. Use a RemoteEvent for the request and another for the reply (with a server-side timeout), or at least run the invoke in a detached thread (`task.spawn`) with a timeout and validate the returned values."
           },
           "partialFingerprints": {
-            "luauShield/v1": "1d8227464e81613f"
+            "luauShield/v1": "ec4e40038aa684dd"
           },
           "properties": {
             "severity": "medium"
           },
-          "ruleId": "LS006",
+          "ruleId": "luau-shield006",
           "ruleIndex": 5
         },
         {
@@ -1724,12 +1724,12 @@ expression: sarif
             "text": "credential `tsk_live_4f9…` is hard-coded in a ModuleScript replicated to clients: every player can read it. Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox secrets (`HttpService:GetSecret`) and revoke the leaked credential."
           },
           "partialFingerprints": {
-            "luauShield/v1": "454a52210b129cef"
+            "luauShield/v1": "78f4d884d9b865dd"
           },
           "properties": {
             "severity": "critical"
           },
-          "ruleId": "LS008",
+          "ruleId": "luau-shield008",
           "ruleIndex": 7
         },
         {
@@ -1754,12 +1754,12 @@ expression: sarif
             "text": "Discord webhook URL `https://disc…` is hard-coded in a ModuleScript replicated to clients: every player can read it. Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox secrets (`HttpService:GetSecret`) and revoke the leaked credential."
           },
           "partialFingerprints": {
-            "luauShield/v1": "f626229cc78e8a70"
+            "luauShield/v1": "0723bed0b14e767a"
           },
           "properties": {
             "severity": "critical"
           },
-          "ruleId": "LS008",
+          "ruleId": "luau-shield008",
           "ruleIndex": 7
         },
         {
@@ -1784,12 +1784,12 @@ expression: sarif
             "text": "credential `Tyc00n-Adm1n…` is hard-coded in a ModuleScript replicated to clients: every player can read it. Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox secrets (`HttpService:GetSecret`) and revoke the leaked credential."
           },
           "partialFingerprints": {
-            "luauShield/v1": "b8eed956f81c0981"
+            "luauShield/v1": "fdd0810fdafc3d4b"
           },
           "properties": {
             "severity": "critical"
           },
-          "ruleId": "LS008",
+          "ruleId": "luau-shield008",
           "ruleIndex": 7
         }
       ],
@@ -1806,11 +1806,11 @@ expression: sarif
                 "text": "A value sent by the client reaches leaderstats, currency/stat fields, player data tables, DataStores or MemoryStores without being validated."
               },
               "help": {
-                "markdown": "A value sent by the client reaches leaderstats, currency/stat fields, player data tables, DataStores or MemoryStores without being validated.\n\n**Why:** Exploiters can fire any remote with any arguments. If the server adds a client-supplied amount to a currency, saves a client-supplied table or lets the client pick the DataStore key, an exploiter can give themselves unlimited currency, corrupt other players' data or poison saves with NaN/huge values.\n\n**Fix:** Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS001.md)",
+                "markdown": "A value sent by the client reaches leaderstats, currency/stat fields, player data tables, DataStores or MemoryStores without being validated.\n\n**Why:** Exploiters can fire any remote with any arguments. If the server adds a client-supplied amount to a currency, saves a client-supplied table or lets the client pick the DataStore key, an exploiter can give themselves unlimited currency, corrupt other players' data or poison saves with NaN/huge values.\n\n**Fix:** Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md)",
                 "text": "A value sent by the client reaches leaderstats, currency/stat fields, player data tables, DataStores or MemoryStores without being validated.\n\nWhy: Exploiters can fire any remote with any arguments. If the server adds a client-supplied amount to a currency, saves a client-supplied table or lets the client pick the DataStore key, an exploiter can give themselves unlimited currency, corrupt other players' data or poison saves with NaN/huge values.\n\nFix: Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key."
               },
-              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS001.md",
-              "id": "LS001",
+              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md",
+              "id": "luau-shield001",
               "name": "untrusted-economy-write",
               "properties": {
                 "precision": "high",
@@ -1833,11 +1833,11 @@ expression: sarif
                 "text": "A value sent by the client is assigned to a property such as Position, CFrame, Health, WalkSpeed, Parent or Text, or passed to PivotTo/TakeDamage/ApplyImpulse/SetAttribute."
               },
               "help": {
-                "markdown": "A value sent by the client is assigned to a property such as Position, CFrame, Health, WalkSpeed, Parent or Text, or passed to PivotTo/TakeDamage/ApplyImpulse/SetAttribute.\n\n**Why:** The server replicates these properties to everyone. Trusting the client lets exploiters teleport, fly, heal themselves, kill other players, move or delete parts, or display unfiltered text to other players.\n\n**Fix:** Compute the value on the server (from server-side stats, the character's real position, etc.). If it must come from the client, clamp it to a sensible range, check distances against the character, allow-list instances, and filter text with TextService.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS002.md)",
+                "markdown": "A value sent by the client is assigned to a property such as Position, CFrame, Health, WalkSpeed, Parent or Text, or passed to PivotTo/TakeDamage/ApplyImpulse/SetAttribute.\n\n**Why:** The server replicates these properties to everyone. Trusting the client lets exploiters teleport, fly, heal themselves, kill other players, move or delete parts, or display unfiltered text to other players.\n\n**Fix:** Compute the value on the server (from server-side stats, the character's real position, etc.). If it must come from the client, clamp it to a sensible range, check distances against the character, allow-list instances, and filter text with TextService.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield002.md)",
                 "text": "A value sent by the client is assigned to a property such as Position, CFrame, Health, WalkSpeed, Parent or Text, or passed to PivotTo/TakeDamage/ApplyImpulse/SetAttribute.\n\nWhy: The server replicates these properties to everyone. Trusting the client lets exploiters teleport, fly, heal themselves, kill other players, move or delete parts, or display unfiltered text to other players.\n\nFix: Compute the value on the server (from server-side stats, the character's real position, etc.). If it must come from the client, clamp it to a sensible range, check distances against the character, allow-list instances, and filter text with TextService."
               },
-              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS002.md",
-              "id": "LS002",
+              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield002.md",
+              "id": "luau-shield002",
               "name": "untrusted-instance-property",
               "properties": {
                 "precision": "high",
@@ -1860,11 +1860,11 @@ expression: sarif
                 "text": "An Instance received from a remote is modified, destroyed, moved or used as a source of data without verifying that it belongs to the player or is where it should be."
               },
               "help": {
-                "markdown": "An Instance received from a remote is modified, destroyed, moved or used as a source of data without verifying that it belongs to the player or is where it should be.\n\n**Why:** A remote can be fired with any Instance the client can see: another player's tool, a door on the other side of the map, a part of someone else's plot. Type checks such as `IsA` only prove what kind of object it is, not that the player is allowed to touch it.\n\n**Fix:** Verify ownership or location before using the Instance: `inst:IsDescendantOf(player.Character)`, compare an `Owner` attribute with `player.UserId`, check the distance to the character, or look it up in a server-side list of allowed instances.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS003.md)",
+                "markdown": "An Instance received from a remote is modified, destroyed, moved or used as a source of data without verifying that it belongs to the player or is where it should be.\n\n**Why:** A remote can be fired with any Instance the client can see: another player's tool, a door on the other side of the map, a part of someone else's plot. Type checks such as `IsA` only prove what kind of object it is, not that the player is allowed to touch it.\n\n**Fix:** Verify ownership or location before using the Instance: `inst:IsDescendantOf(player.Character)`, compare an `Owner` attribute with `player.UserId`, check the distance to the character, or look it up in a server-side list of allowed instances.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield003.md)",
                 "text": "An Instance received from a remote is modified, destroyed, moved or used as a source of data without verifying that it belongs to the player or is where it should be.\n\nWhy: A remote can be fired with any Instance the client can see: another player's tool, a door on the other side of the map, a part of someone else's plot. Type checks such as `IsA` only prove what kind of object it is, not that the player is allowed to touch it.\n\nFix: Verify ownership or location before using the Instance: `inst:IsDescendantOf(player.Character)`, compare an `Owner` attribute with `player.UserId`, check the distance to the character, or look it up in a server-side list of allowed instances."
               },
-              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS003.md",
-              "id": "LS003",
+              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield003.md",
+              "id": "luau-shield003",
               "name": "unverified-client-instance",
               "properties": {
                 "precision": "high",
@@ -1887,11 +1887,11 @@ expression: sarif
                 "text": "A value sent by the client reaches `loadstring`, `load`, `require` or a dynamic global lookup (`getfenv()[x]`, `_G[x]`)."
               },
               "help": {
-                "markdown": "A value sent by the client reaches `loadstring`, `load`, `require` or a dynamic global lookup (`getfenv()[x]`, `_G[x]`).\n\n**Why:** This gives the client remote code execution on the server: an exploiter can run arbitrary code with server privileges, require malicious assets by id, delete the game, steal data or ban players.\n\n**Fix:** Never run code or require modules chosen by the client. Dispatch commands through a server-side table of allowed functions (`Commands[name]`) and validate the name against it.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS004.md)",
+                "markdown": "A value sent by the client reaches `loadstring`, `load`, `require` or a dynamic global lookup (`getfenv()[x]`, `_G[x]`).\n\n**Why:** This gives the client remote code execution on the server: an exploiter can run arbitrary code with server privileges, require malicious assets by id, delete the game, steal data or ban players.\n\n**Fix:** Never run code or require modules chosen by the client. Dispatch commands through a server-side table of allowed functions (`Commands[name]`) and validate the name against it.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield004.md)",
                 "text": "A value sent by the client reaches `loadstring`, `load`, `require` or a dynamic global lookup (`getfenv()[x]`, `_G[x]`).\n\nWhy: This gives the client remote code execution on the server: an exploiter can run arbitrary code with server privileges, require malicious assets by id, delete the game, steal data or ban players.\n\nFix: Never run code or require modules chosen by the client. Dispatch commands through a server-side table of allowed functions (`Commands[name]`) and validate the name against it."
               },
-              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS004.md",
-              "id": "LS004",
+              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield004.md",
+              "id": "luau-shield004",
               "name": "untrusted-code-execution",
               "properties": {
                 "precision": "high",
@@ -1914,11 +1914,11 @@ expression: sarif
                 "text": "A value sent by the client is used to build the URL, headers or body of `HttpService:GetAsync/PostAsync/RequestAsync`."
               },
               "help": {
-                "markdown": "A value sent by the client is used to build the URL, headers or body of `HttpService:GetAsync/PostAsync/RequestAsync`.\n\n**Why:** The client can make your server send requests to arbitrary endpoints or paths, abuse your webhooks and proxies (spam, @everyone pings, Terms of Service violations that get the webhook or game banned) and exhaust the HttpService request budget.\n\n**Fix:** Keep URLs on the server and choose them through an allow-listed key. Encode client values with `HttpService:UrlEncode`, convert ids with `tonumber`, limit the length of text and rate-limit the remote.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS005.md)",
+                "markdown": "A value sent by the client is used to build the URL, headers or body of `HttpService:GetAsync/PostAsync/RequestAsync`.\n\n**Why:** The client can make your server send requests to arbitrary endpoints or paths, abuse your webhooks and proxies (spam, @everyone pings, Terms of Service violations that get the webhook or game banned) and exhaust the HttpService request budget.\n\n**Fix:** Keep URLs on the server and choose them through an allow-listed key. Encode client values with `HttpService:UrlEncode`, convert ids with `tonumber`, limit the length of text and rate-limit the remote.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield005.md)",
                 "text": "A value sent by the client is used to build the URL, headers or body of `HttpService:GetAsync/PostAsync/RequestAsync`.\n\nWhy: The client can make your server send requests to arbitrary endpoints or paths, abuse your webhooks and proxies (spam, @everyone pings, Terms of Service violations that get the webhook or game banned) and exhaust the HttpService request budget.\n\nFix: Keep URLs on the server and choose them through an allow-listed key. Encode client values with `HttpService:UrlEncode`, convert ids with `tonumber`, limit the length of text and rate-limit the remote."
               },
-              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS005.md",
-              "id": "LS005",
+              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield005.md",
+              "id": "luau-shield005",
               "name": "untrusted-http-request",
               "properties": {
                 "precision": "high",
@@ -1941,11 +1941,11 @@ expression: sarif
                 "text": "The server calls `RemoteFunction:InvokeClient` (or assigns `OnClientInvoke`), so it depends on an answer from an untrusted client."
               },
               "help": {
-                "markdown": "The server calls `RemoteFunction:InvokeClient` (or assigns `OnClientInvoke`), so it depends on an answer from an untrusted client.\n\n**Why:** A malicious client can simply never return: the server thread yields forever (pcall does not help), leaking memory and blocking whatever logic waits for the answer. A client that errors or leaves also breaks the call, and every value it returns is client-controlled.\n\n**Fix:** Use a RemoteEvent for the request and another for the reply (with a server-side timeout), or at least run the invoke in a detached thread (`task.spawn`) with a timeout and validate the returned values.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS006.md)",
+                "markdown": "The server calls `RemoteFunction:InvokeClient` (or assigns `OnClientInvoke`), so it depends on an answer from an untrusted client.\n\n**Why:** A malicious client can simply never return: the server thread yields forever (pcall does not help), leaking memory and blocking whatever logic waits for the answer. A client that errors or leaves also breaks the call, and every value it returns is client-controlled.\n\n**Fix:** Use a RemoteEvent for the request and another for the reply (with a server-side timeout), or at least run the invoke in a detached thread (`task.spawn`) with a timeout and validate the returned values.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield006.md)",
                 "text": "The server calls `RemoteFunction:InvokeClient` (or assigns `OnClientInvoke`), so it depends on an answer from an untrusted client.\n\nWhy: A malicious client can simply never return: the server thread yields forever (pcall does not help), leaking memory and blocking whatever logic waits for the answer. A client that errors or leaves also breaks the call, and every value it returns is client-controlled.\n\nFix: Use a RemoteEvent for the request and another for the reply (with a server-side timeout), or at least run the invoke in a detached thread (`task.spawn`) with a timeout and validate the returned values."
               },
-              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS006.md",
-              "id": "LS006",
+              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield006.md",
+              "id": "luau-shield006",
               "name": "server-invokes-client",
               "properties": {
                 "precision": "high",
@@ -1968,11 +1968,11 @@ expression: sarif
                 "text": "A remote handler calls `*Async` APIs, `Instance.new` or `:Clone()` and has no visible rate limit or debounce."
               },
               "help": {
-                "markdown": "A remote handler calls `*Async` APIs, `Instance.new` or `:Clone()` and has no visible rate limit or debounce.\n\n**Why:** Exploiters can fire a remote thousands of times per second. Without a limit, each call spends DataStore/HTTP budgets, creates instances or yields, which is enough to lag or crash the server and to exhaust request quotas for everyone.\n\n**Fix:** Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS007.md)",
+                "markdown": "A remote handler calls `*Async` APIs, `Instance.new` or `:Clone()` and has no visible rate limit or debounce.\n\n**Why:** Exploiters can fire a remote thousands of times per second. Without a limit, each call spends DataStore/HTTP budgets, creates instances or yields, which is enough to lag or crash the server and to exhaust request quotas for everyone.\n\n**Fix:** Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield007.md)",
                 "text": "A remote handler calls `*Async` APIs, `Instance.new` or `:Clone()` and has no visible rate limit or debounce.\n\nWhy: Exploiters can fire a remote thousands of times per second. Without a limit, each call spends DataStore/HTTP budgets, creates instances or yields, which is enough to lag or crash the server and to exhaust request quotas for everyone.\n\nFix: Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
               },
-              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS007.md",
-              "id": "LS007",
+              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield007.md",
+              "id": "luau-shield007",
               "name": "remote-without-rate-limit",
               "properties": {
                 "precision": "high",
@@ -1995,11 +1995,11 @@ expression: sarif
                 "text": "A webhook URL, API key, token or cookie is written in a LocalScript or in a ModuleScript that clients can read."
               },
               "help": {
-                "markdown": "A webhook URL, API key, token or cookie is written in a LocalScript or in a ModuleScript that clients can read.\n\n**Why:** Exploiters can decompile every LocalScript and replicated ModuleScript. A leaked webhook can be spammed or deleted, and a leaked API key gives full access to the account or service behind it.\n\n**Fix:** Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox secrets (`HttpService:GetSecret`) and revoke the leaked credential.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS008.md)",
+                "markdown": "A webhook URL, API key, token or cookie is written in a LocalScript or in a ModuleScript that clients can read.\n\n**Why:** Exploiters can decompile every LocalScript and replicated ModuleScript. A leaked webhook can be spammed or deleted, and a leaked API key gives full access to the account or service behind it.\n\n**Fix:** Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox secrets (`HttpService:GetSecret`) and revoke the leaked credential.\n\n[Documentation](https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield008.md)",
                 "text": "A webhook URL, API key, token or cookie is written in a LocalScript or in a ModuleScript that clients can read.\n\nWhy: Exploiters can decompile every LocalScript and replicated ModuleScript. A leaked webhook can be spammed or deleted, and a leaked API key gives full access to the account or service behind it.\n\nFix: Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox secrets (`HttpService:GetSecret`) and revoke the leaked credential."
               },
-              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS008.md",
-              "id": "LS008",
+              "helpUri": "https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield008.md",
+              "id": "luau-shield008",
               "name": "client-exposed-secret",
               "properties": {
                 "precision": "high",

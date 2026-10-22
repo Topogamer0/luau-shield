@@ -410,7 +410,7 @@ impl<'a> Analyzer<'a> {
         if let Some(witness) = &value.witness {
             on_true.add(witness.clone(), check::ALLOWLIST);
         }
-        // LS007 lock pattern: `if busy[player] then return end`.
+        // luau-shield007 lock pattern: `if busy[player] then return end`.
         if let Expression::Var(Var::Expression(var)) = unwrap_expr(expr) {
             let suffixes: Vec<&'a Suffix> = var.suffixes().collect();
             if let Some((Suffix::Index(Index::Brackets { expression, .. }), init)) =

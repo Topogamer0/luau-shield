@@ -37,14 +37,14 @@ max-call-depth = 6
 # ("low" | "medium" | "high" | "critical"), or a table such as
 # { enabled = true, severity = "medium" }.
 [rules]
-# LS001 = "on"    # untrusted-economy-write        (high)
-# LS002 = "on"    # untrusted-instance-property    (high)
-# LS003 = "on"    # unverified-client-instance     (high)
-# LS004 = "on"    # untrusted-code-execution       (critical)
-# LS005 = "on"    # untrusted-http-request         (high)
-# LS006 = "on"    # server-invokes-client          (medium)
-# LS007 = "on"    # remote-without-rate-limit      (low)
-# LS008 = "on"    # client-exposed-secret          (critical)
+# luau-shield001 = "on"    # untrusted-economy-write        (high)
+# luau-shield002 = "on"    # untrusted-instance-property    (high)
+# luau-shield003 = "on"    # unverified-client-instance     (high)
+# luau-shield004 = "on"    # untrusted-code-execution       (critical)
+# luau-shield005 = "on"    # untrusted-http-request         (high)
+# luau-shield006 = "on"    # server-invokes-client          (medium)
+# luau-shield007 = "on"    # remote-without-rate-limit      (low)
+# luau-shield008 = "on"    # client-exposed-secret          (critical)
 
 # Your own validation functions. A sanitizer protects a value when it is used
 # as a guard (`if not Validate.amount(x) then return end`,
@@ -60,7 +60,7 @@ max-call-depth = 6
 #
 # [[sinks]]
 # function = "Economy.addCoins"
-# rule = "LS001"                 # rule the finding is reported under
+# rule = "luau-shield001"                 # rule the finding is reported under
 # arguments = [2]                # 1-based; default: all arguments ("self" of a ":" call is not counted)
 
 # Functions whose parameters come from the client (Knit "*.Client.*" methods

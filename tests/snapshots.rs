@@ -23,7 +23,7 @@ fn text_fixed_game() {
 
 #[test]
 fn json_single_file() {
-    let report = check("tests/fixtures/LS001/vulnerable");
+    let report = check("tests/fixtures/luau-shield001/vulnerable");
     insta::assert_snapshot!(report::json::render(&report));
 }
 

@@ -31,8 +31,8 @@ used as hints: a path component named `server`, `ServerScriptService` or
 client; `shared`, `common` or `ReplicatedStorage` means replicated module
 (matching is case-insensitive).
 
-Server-side rules (LS001–LS007) never run on client files: a LocalScript that
-changes `leaderstats` only changes the local copy. LS008 (secrets) only runs on
+Server-side rules (luau-shield001–luau-shield007) never run on client files: a LocalScript that
+changes `leaderstats` only changes the local copy. luau-shield008 (secrets) only runs on
 code whose source is sent to clients.
 
 ## 2. Sources of untrusted data
@@ -164,14 +164,14 @@ Each rule has its own sinks and its own idea of "checked enough":
 
 | Rule | Sink | Required facts |
 | --- | --- | --- |
-| [LS001](rules/LS001.md) | currency/stats/leaderstats writes, persistent data writes, DataStore/MemoryStore writes | allow-listed, validated, boolean, or *type number + lower bound + upper bound + NaN rejected* (strings: type + length or pattern) |
-| [LS002](rules/LS002.md) | sensitive Instance properties (`Position`, `CFrame`, `Health`, `WalkSpeed`, `Parent`, `Text`, ...) and methods (`PivotTo`, `TakeDamage`, `ApplyImpulse`, `SetAttribute`, ...) | allow-listed, validated, boolean, or lower + upper bound (`Parent`: ownership; `Text`: filtered) |
-| [LS003](rules/LS003.md) | an Instance sent by the client that is modified, destroyed, cloned, moved or whose data is used | ownership/location, allow-listed or validated |
-| [LS004](rules/LS004.md) | `loadstring`, `load`, `require`, `getfenv()[x]`, `_G[x]` | allow-listed or validated |
-| [LS005](rules/LS005.md) | `HttpService:GetAsync/PostAsync/RequestAsync` URL, headers and body | URL: allow-listed, pattern, url-encoded, number, validated. Body: same, or type string + length, or filtered |
-| [LS006](rules/LS006.md) | `RemoteFunction:InvokeClient` on the server outside a detached thread; `OnClientInvoke` assigned in server code | — |
-| [LS007](rules/LS007.md) | remote handlers doing expensive work (`*Async` calls, `Instance.new`, `:Clone()`) without a rate limit | a rate limit (see the rule page) |
-| [LS008](rules/LS008.md) | hard-coded webhooks, API keys and tokens in code replicated to clients | — |
+| [luau-shield001](rules/luau-shield001.md) | currency/stats/leaderstats writes, persistent data writes, DataStore/MemoryStore writes | allow-listed, validated, boolean, or *type number + lower bound + upper bound + NaN rejected* (strings: type + length or pattern) |
+| [luau-shield002](rules/luau-shield002.md) | sensitive Instance properties (`Position`, `CFrame`, `Health`, `WalkSpeed`, `Parent`, `Text`, ...) and methods (`PivotTo`, `TakeDamage`, `ApplyImpulse`, `SetAttribute`, ...) | allow-listed, validated, boolean, or lower + upper bound (`Parent`: ownership; `Text`: filtered) |
+| [luau-shield003](rules/luau-shield003.md) | an Instance sent by the client that is modified, destroyed, cloned, moved or whose data is used | ownership/location, allow-listed or validated |
+| [luau-shield004](rules/luau-shield004.md) | `loadstring`, `load`, `require`, `getfenv()[x]`, `_G[x]` | allow-listed or validated |
+| [luau-shield005](rules/luau-shield005.md) | `HttpService:GetAsync/PostAsync/RequestAsync` URL, headers and body | URL: allow-listed, pattern, url-encoded, number, validated. Body: same, or type string + length, or filtered |
+| [luau-shield006](rules/luau-shield006.md) | `RemoteFunction:InvokeClient` on the server outside a detached thread; `OnClientInvoke` assigned in server code | — |
+| [luau-shield007](rules/luau-shield007.md) | remote handlers doing expensive work (`*Async` calls, `Instance.new`, `:Clone()`) without a rate limit | a rate limit (see the rule page) |
+| [luau-shield008](rules/luau-shield008.md) | hard-coded webhooks, API keys and tokens in code replicated to clients | — |
 
 ## 6. Limits
 
@@ -195,5 +195,5 @@ Static analysis is an approximation and can be wrong in both directions:
 When the analyzer is wrong, suppress the finding with a comment and a reason:
 
 ```lua
-coins.Value += amount -- luau-shield-ignore: LS001 amount is validated by the shop module
+coins.Value += amount -- luau-shield-ignore: luau-shield001 amount is validated by the shop module
 ```

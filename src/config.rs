@@ -368,9 +368,9 @@ mod tests {
             fail-on = "never"
             ignore = ["vendor"]
             [rules]
-            LS007 = "off"
-            LS006 = "high"
-            LS002 = { enabled = true, severity = "low" }
+            luau-shield007 = "off"
+            luau-shield006 = "high"
+            luau-shield002 = { enabled = true, severity = "low" }
             [[sanitizers]]
             function = "Validate.amount"
             [[sanitizers]]
@@ -378,7 +378,7 @@ mod tests {
             checks = ["ownership"]
             [[sinks]]
             function = "Economy.addCoins"
-            rule = "LS001"
+            rule = "luau-shield001"
             arguments = [2]
             [[sources]]
             function = "Net.*"

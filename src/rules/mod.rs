@@ -157,7 +157,7 @@ impl RuleMeta {
 
 pub static RULES: [RuleMeta; 8] = [
     RuleMeta {
-        code: "LS001",
+        code: "luau-shield001",
         slug: "untrusted-economy-write",
         title: "Client-controlled value written to currency, stats or saved data",
         severity: Severity::High,
@@ -166,7 +166,7 @@ pub static RULES: [RuleMeta; 8] = [
         fix: "Let the server decide amounts (look prices and rewards up in a server table by an allow-listed id). If a number must come from the client, check `typeof(x) == \"number\"`, reject NaN (`x ~= x`) and check both bounds before using it. Never use client data as a DataStore key.",
     },
     RuleMeta {
-        code: "LS002",
+        code: "luau-shield002",
         slug: "untrusted-instance-property",
         title: "Client-controlled value assigned to a sensitive Instance property",
         severity: Severity::High,
@@ -175,7 +175,7 @@ pub static RULES: [RuleMeta; 8] = [
         fix: "Compute the value on the server (from server-side stats, the character's real position, etc.). If it must come from the client, clamp it to a sensible range, check distances against the character, allow-list instances, and filter text with TextService.",
     },
     RuleMeta {
-        code: "LS003",
+        code: "luau-shield003",
         slug: "unverified-client-instance",
         title: "Instance sent by the client used without checking ownership or location",
         severity: Severity::High,
@@ -184,7 +184,7 @@ pub static RULES: [RuleMeta; 8] = [
         fix: "Verify ownership or location before using the Instance: `inst:IsDescendantOf(player.Character)`, compare an `Owner` attribute with `player.UserId`, check the distance to the character, or look it up in a server-side list of allowed instances.",
     },
     RuleMeta {
-        code: "LS004",
+        code: "luau-shield004",
         slug: "untrusted-code-execution",
         title: "Client-controlled value reaches loadstring/require",
         severity: Severity::Critical,
@@ -193,7 +193,7 @@ pub static RULES: [RuleMeta; 8] = [
         fix: "Never run code or require modules chosen by the client. Dispatch commands through a server-side table of allowed functions (`Commands[name]`) and validate the name against it.",
     },
     RuleMeta {
-        code: "LS005",
+        code: "luau-shield005",
         slug: "untrusted-http-request",
         title: "Client-controlled URL, headers or body in an HttpService request",
         severity: Severity::High,
@@ -202,7 +202,7 @@ pub static RULES: [RuleMeta; 8] = [
         fix: "Keep URLs on the server and choose them through an allow-listed key. Encode client values with `HttpService:UrlEncode`, convert ids with `tonumber`, limit the length of text and rate-limit the remote.",
     },
     RuleMeta {
-        code: "LS006",
+        code: "luau-shield006",
         slug: "server-invokes-client",
         title: "Server waits for a client with RemoteFunction:InvokeClient",
         severity: Severity::Medium,
@@ -211,7 +211,7 @@ pub static RULES: [RuleMeta; 8] = [
         fix: "Use a RemoteEvent for the request and another for the reply (with a server-side timeout), or at least run the invoke in a detached thread (`task.spawn`) with a timeout and validate the returned values.",
     },
     RuleMeta {
-        code: "LS007",
+        code: "luau-shield007",
         slug: "remote-without-rate-limit",
         title: "Remote handler does expensive work without a rate limit",
         severity: Severity::Low,
@@ -220,7 +220,7 @@ pub static RULES: [RuleMeta; 8] = [
         fix: "Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module.",
     },
     RuleMeta {
-        code: "LS008",
+        code: "luau-shield008",
         slug: "client-exposed-secret",
         title: "Secret hard-coded in code that replicates to clients",
         severity: Severity::Critical,
@@ -349,6 +349,7 @@ mod tests {
             assert_eq!(rule.code().parse::<RuleId>().unwrap(), rule);
             assert_eq!(rule.meta().slug.parse::<RuleId>().unwrap(), rule);
         }
-        assert_eq!("ls003".parse::<RuleId>().unwrap(), RuleId::Ls003);
+        assert_eq!("LUAU-SHIELD003".parse::<RuleId>().unwrap(), RuleId::Ls003);
+        assert!("LS003".parse::<RuleId>().is_err());
     }
 }

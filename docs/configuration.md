@@ -41,7 +41,7 @@ A flag always wins over the file:
 | Lowest reported severity | `min-severity` | `-s`, `--min-severity` |
 | Severity that fails the run | `fail-on` | `--fail-on` |
 | Rojo project | `project` | `--project` |
-| Rules that run | `[rules]` | `--disable LS006,LS007`, `--only LS001` |
+| Rules that run | `[rules]` | `--disable luau-shield006,luau-shield007`, `--only luau-shield001` |
 | Ollama model for `--explain` | `[explain] model` | `--ollama-model` |
 
 `--disable` turns the listed rules off on top of `[rules]`. `--only` runs the
@@ -62,8 +62,8 @@ trust-unresolved-validators = true
 max-call-depth = 6
 
 [rules]
-LS007 = "off"
-LS006 = "high"
+luau-shield007 = "off"
+luau-shield006 = "high"
 
 [[sanitizers]]
 function = "Validate.amount"
@@ -71,7 +71,7 @@ checks = "all"
 
 [[sinks]]
 function = "Economy.addCoins"
-rule = "LS001"
+rule = "luau-shield001"
 arguments = [2]
 
 [[sources]]
@@ -112,14 +112,14 @@ are rule ids; rules that are not listed run with their default severity.
 
 | Rule | Name | Default severity |
 | --- | --- | --- |
-| [LS001](rules/LS001.md) | untrusted-economy-write | high |
-| [LS002](rules/LS002.md) | untrusted-instance-property | high |
-| [LS003](rules/LS003.md) | unverified-client-instance | high |
-| [LS004](rules/LS004.md) | untrusted-code-execution | critical |
-| [LS005](rules/LS005.md) | untrusted-http-request | high |
-| [LS006](rules/LS006.md) | server-invokes-client | medium |
-| [LS007](rules/LS007.md) | remote-without-rate-limit | low |
-| [LS008](rules/LS008.md) | client-exposed-secret | critical |
+| [luau-shield001](rules/luau-shield001.md) | untrusted-economy-write | high |
+| [luau-shield002](rules/luau-shield002.md) | untrusted-instance-property | high |
+| [luau-shield003](rules/luau-shield003.md) | unverified-client-instance | high |
+| [luau-shield004](rules/luau-shield004.md) | untrusted-code-execution | critical |
+| [luau-shield005](rules/luau-shield005.md) | untrusted-http-request | high |
+| [luau-shield006](rules/luau-shield006.md) | server-invokes-client | medium |
+| [luau-shield007](rules/luau-shield007.md) | remote-without-rate-limit | low |
+| [luau-shield008](rules/luau-shield008.md) | client-exposed-secret | critical |
 
 `luau-shield rules` prints the same list.
 
@@ -134,9 +134,9 @@ Each value is one of:
 
 ```toml
 [rules]
-LS006 = "high"                                  # treat InvokeClient on the server as high
-LS007 = "off"                                   # rate limiting is enforced elsewhere
-LS002 = { enabled = true, severity = "critical" }
+luau-shield006 = "high"                                  # treat InvokeClient on the server as high
+luau-shield007 = "off"                                   # rate limiting is enforced elsewhere
+luau-shield002 = { enabled = true, severity = "critical" }
 ```
 
 A changed severity is used everywhere: for `min-severity`, for `fail-on` and
@@ -218,11 +218,11 @@ Which facts are enough depends on the rule:
 
 | Rule | Enough |
 | --- | --- |
-| LS001 | `allowlist`; numbers: `type` + `lower` + `upper` + `nan`; strings: `type` + `length`, or `pattern` |
-| LS002 | `allowlist`; `lower` + `upper`; `Parent`, `Team`, `RespawnLocation`, `PrimaryPart`: `ownership`; `Text`: `filtered` |
-| LS003 | `ownership` or `allowlist` |
-| LS004 | `allowlist` |
-| LS005 | URL: `allowlist`, `pattern` or `encoded`; body and headers: the same, or `type` + `length`, or `filtered` |
+| luau-shield001 | `allowlist`; numbers: `type` + `lower` + `upper` + `nan`; strings: `type` + `length`, or `pattern` |
+| luau-shield002 | `allowlist`; `lower` + `upper`; `Parent`, `Team`, `RespawnLocation`, `PrimaryPart`: `ownership`; `Text`: `filtered` |
+| luau-shield003 | `ownership` or `allowlist` |
+| luau-shield004 | `allowlist` |
+| luau-shield005 | URL: `allowlist`, `pattern` or `encoded`; body and headers: the same, or `type` + `length`, or `filtered` |
 
 When in doubt, keep the default `checks = "all"`; list facts only when the
 function really checks less than everything.
@@ -237,14 +237,14 @@ API).
 ```toml
 [[sinks]]
 function = "Economy.addCoins"   # Economy.addCoins(player, amount)
-rule = "LS001"
+rule = "luau-shield001"
 arguments = [2]
 ```
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `function` | string | required | [Function pattern](#function-patterns). |
-| `rule` | string | required | Rule the finding is reported under. The value must pass the same checks as that rule's built-in sinks (for `LS001`: allow-listed, validated, or a number with lower and upper bounds and NaN rejected, ...). |
+| `rule` | string | required | Rule the finding is reported under. The value must pass the same checks as that rule's built-in sinks (for `luau-shield001`: allow-listed, validated, or a number with lower and upper bounds and NaN rejected, ...). |
 | `arguments` | array of integers | all arguments | 1-based positions that must not receive client data. For a method call written with `:`, `self` is not counted: in `PlayerData:set(player, key, value)`, `value` is argument `3`. |
 
 The finding is reported on the line of the call.
@@ -296,16 +296,16 @@ next reviewer reads.
 the line directly above it:
 
 ```lua
-coins.Value += amount -- luau-shield-ignore: LS001 amount is validated by the shop module
+coins.Value += amount -- luau-shield-ignore: luau-shield001 amount is validated by the shop module
 
--- luau-shield-ignore: LS003 doors are registered and checked by DoorRegistry
+-- luau-shield-ignore: luau-shield003 doors are registered and checked by DoorRegistry
 door.CanCollide = false
 ```
 
 **A whole file.** Put the comment at the top of the file:
 
 ```lua
--- luau-shield-ignore-file: LS007 admin remotes, only callable by group admins
+-- luau-shield-ignore-file: luau-shield007 admin remotes, only callable by group admins
 ```
 
 Suppressed findings are not reported and do not affect the exit code, but
@@ -315,17 +315,17 @@ The comment goes on the line where the finding is reported:
 
 | Rule | Line of the finding |
 | --- | --- |
-| LS001, LS002, LS005 | the assignment or the method call (the sink) |
-| LS003 | the first statement that uses the unverified Instance |
-| LS004 | the `loadstring` / `require` / dynamic lookup call |
-| LS006 | the `:InvokeClient(` call or the `OnClientInvoke =` assignment |
-| LS007 | the line containing `OnServerEvent` / `OnServerInvoke` |
-| LS008 | the line of the string literal |
+| luau-shield001, luau-shield002, luau-shield005 | the assignment or the method call (the sink) |
+| luau-shield003 | the first statement that uses the unverified Instance |
+| luau-shield004 | the `loadstring` / `require` / dynamic lookup call |
+| luau-shield006 | the `:InvokeClient(` call or the `OnClientInvoke =` assignment |
+| luau-shield007 | the line containing `OnServerEvent` / `OnServerInvoke` |
+| luau-shield008 | the line of the string literal |
 
 For example, to accept a handler without a rate limit:
 
 ```lua
--- luau-shield-ignore: LS007 called at most once per round by the game loop
+-- luau-shield-ignore: luau-shield007 called at most once per round by the game loop
 remotes.ReadyUp.OnServerEvent:Connect(function(player)
 	readyPlayers[player] = true
 end)
@@ -372,7 +372,7 @@ fail-on = "medium"
 ignore = ["**/*.spec.luau", "src/server/Dev/**"]
 
 [rules]
-LS006 = "high"   # we never want InvokeClient on the server
+luau-shield006 = "high"   # we never want InvokeClient on the server
 
 # Validators comes from Packages/, which is never analysed: declare what it guarantees.
 [[sanitizers]]
@@ -415,7 +415,7 @@ end)
 ```
 
 With the configuration below this handler produces no finding. Without the
-`Validate.amount` guard, luau-shield reports LS001 on the `Economy.addCoins`
+`Validate.amount` guard, luau-shield reports luau-shield001 on the `Economy.addCoins`
 line.
 
 ```toml
@@ -445,17 +445,17 @@ checks = "all"
 
 [[sinks]]
 function = "Economy.addCoins"     # Economy.addCoins(player, amount)
-rule = "LS001"
+rule = "luau-shield001"
 arguments = [2]
 
 [[sinks]]
 function = "PlayerData:set"       # PlayerData:set(player, key, value)
-rule = "LS001"
+rule = "luau-shield001"
 arguments = [2, 3]
 
 [[sinks]]
 function = "Admin.run"            # Admin.run(player, commandSource)
-rule = "LS004"
+rule = "luau-shield004"
 arguments = [2]
 ```
 
@@ -477,8 +477,8 @@ trust-unresolved-validators = false
 max-call-depth = 10
 
 [rules]
-LS006 = "high"
-LS007 = { enabled = true, severity = "medium" }
+luau-shield006 = "high"
+luau-shield007 = { enabled = true, severity = "medium" }
 ```
 
 ```sh

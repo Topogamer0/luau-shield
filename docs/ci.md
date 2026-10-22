@@ -71,7 +71,7 @@ visible, even when the job is red.
 | `project` | `""` | Rojo project file (`--project`). Empty: the `project` key of the configuration, or `default.project.json`. |
 | `min-severity` | `low` | Lowest severity that is reported: `low`, `medium`, `high`, `critical`. |
 | `fail-on` | `high` | Fail the job when a reported finding has at least this severity: `low`, `medium`, `high`, `critical`, `never`. |
-| `args` | `""` | Extra arguments for both runs, separated by whitespace, for example `--disable LS007`. Do not pass `--format`, `--output` or `--fail-on`. |
+| `args` | `""` | Extra arguments for both runs, separated by whitespace, for example `--disable luau-shield007`. Do not pass `--format`, `--output` or `--fail-on`. |
 | `sarif-file` | `luau-shield.sarif` | Where the SARIF report is written, relative to the workspace. |
 | `upload-sarif` | `"true"` | Upload the report to code scanning. |
 | `category` | `luau-shield` | Code scanning category. Use one value per run when a workflow checks several projects. |
@@ -111,7 +111,7 @@ Without it, set `upload-sarif: false` (see
 ### Results in the Security tab
 
 Open **Security > Code scanning** in the repository. Every finding is an
-alert with its rule (`LS001` ... `LS008`), its severity, the file and line,
+alert with its rule (`luau-shield001` ... `luau-shield008`), its severity, the file and line,
 and the rule's explanation. Filter with `tool:luau-shield` to see only
 luau-shield alerts.
 
@@ -174,7 +174,7 @@ default):
           path: src
           config: luau-shield.ci.toml
           fail-on: low
-          args: --disable LS006
+          args: --disable luau-shield006
 ```
 
 **Build from a fork or a branch of luau-shield.**
@@ -250,7 +250,7 @@ any reported finding.
 | `luau-shield check src -s medium` | medium and above | any reported finding |
 | `luau-shield check src -s high --fail-on critical` | high and critical | a critical finding |
 | `luau-shield check src --fail-on never` | everything | never |
-| `luau-shield check src --only LS004,LS008` | code execution and secrets only | any of them |
+| `luau-shield check src --only luau-shield004,luau-shield008` | code execution and secrets only | any of them |
 
 Flags override [`luau-shield.toml`](configuration.md).
 
@@ -339,8 +339,8 @@ jq -r '[.runs[].results[].ruleId] | group_by(.) | map("\(.[0]) \(length)") | .[]
 # Total number of findings
 jq '[.runs[].results[]] | length' luau-shield.sarif
 
-# Exit with 1 if a secret (LS008) was found
-jq -e '[.runs[].results[] | select(.ruleId == "LS008")] | length == 0' luau-shield.sarif > /dev/null
+# Exit with 1 if a secret (luau-shield008) was found
+jq -e '[.runs[].results[] | select(.ruleId == "luau-shield008")] | length == 0' luau-shield.sarif > /dev/null
 ```
 
 ## Installing luau-shield

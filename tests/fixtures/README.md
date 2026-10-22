@@ -3,7 +3,7 @@
 Every rule has a directory with two sub-directories:
 
 ```
-tests/fixtures/LS001/
+tests/fixtures/luau-shield001/
 ├── vulnerable/   # every entry MUST produce the findings marked in it
 └── safe/         # every entry MUST produce no finding at all
 ```
@@ -17,8 +17,8 @@ files (`require`, client/server split, replicated modules).
 A finding is expected on a line when that line ends with an `expect` comment:
 
 ```lua
-coins.Value += amount -- expect: LS001
-part:Destroy()        -- expect: LS003, LS002
+coins.Value += amount -- expect: luau-shield001
+part:Destroy()        -- expect: luau-shield003, luau-shield002
 ```
 
 The corpus test (`cargo test --test corpus`) runs luau-shield on each entry and
@@ -30,18 +30,18 @@ compares the set of `(file, line, rule)` findings with the set of markers:
 `safe/` entries must not contain any marker. Entries in `vulnerable/` must
 contain at least one marker for the rule of the directory, and must also mark
 any other finding they legitimately produce (for example a handler that writes
-to a DataStore without a rate limit is also an `LS007`).
+to a DataStore without a rate limit is also a `luau-shield007`).
 
 Where findings are reported:
 
 | Rule | Line of the finding |
 | --- | --- |
-| LS001, LS002, LS005 | the sink: the assignment target or the method call |
-| LS003 | the first statement that uses the unverified Instance (one finding per untrusted parameter per handler) |
-| LS004 | the `loadstring` / `require` / dynamic lookup call |
-| LS006 | the `:InvokeClient(` call or the `OnClientInvoke =` assignment |
-| LS007 | the line containing `OnServerEvent` / `OnServerInvoke` of the handler |
-| LS008 | the line of the string literal |
+| luau-shield001, luau-shield002, luau-shield005 | the sink: the assignment target or the method call |
+| luau-shield003 | the first statement that uses the unverified Instance (one finding per untrusted parameter per handler) |
+| luau-shield004 | the `loadstring` / `require` / dynamic lookup call |
+| luau-shield006 | the `:InvokeClient(` call or the `OnClientInvoke =` assignment |
+| luau-shield007 | the line containing `OnServerEvent` / `OnServerInvoke` of the handler |
+| luau-shield008 | the line of the string literal |
 
 ## Known limitations
 

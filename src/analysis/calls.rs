@@ -214,7 +214,7 @@ fn path_has_data(path: &str) -> bool {
 
 impl<'a> Analyzer<'a> {
     // ------------------------------------------------------------------
-    // LS007 bookkeeping
+    // luau-shield007 bookkeeping
     // ------------------------------------------------------------------
 
     fn note_expensive(&mut self, what: String) {
@@ -308,7 +308,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// LS003: the client chose this Instance, and we are about to use it.
+    /// luau-shield003: the client chose this Instance, and we are about to use it.
     fn check_instance_use(&mut self, value: &Value<'a>, loc: Loc, what: &str) {
         if self.peek > 0 || self.quiet > 0 {
             return;
@@ -427,7 +427,7 @@ impl<'a> Analyzer<'a> {
                 self.check_instance_use(arg, loc, &format!("`{call}` is called"));
             }
         }
-        // LS001: DataStores and MemoryStores.
+        // luau-shield001: DataStores and MemoryStores.
         let store_like = matches!(
             recv.class(),
             Some(ObjClass::DataStore | ObjClass::MemoryStore)
@@ -509,7 +509,7 @@ impl<'a> Analyzer<'a> {
                 );
             }
         }
-        // LS005: HttpService.
+        // luau-shield005: HttpService.
         if recv.is_service("HttpService") {
             let url_what = format!("is used in the URL of `{call}`");
             let body_what = format!("is sent in the body of `{call}`");

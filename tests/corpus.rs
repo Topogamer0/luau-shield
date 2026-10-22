@@ -1,5 +1,5 @@
 //! Runs luau-shield on every entry of `tests/fixtures` and compares the
-//! findings with the `-- expect: LSxxx` markers.
+//! findings with the `-- expect: luau-shieldNNN` markers.
 //!
 //! - a finding without a marker is a false positive;
 //! - a marker without a finding is a false negative.
@@ -39,7 +39,7 @@ fn lua_files(entry: &Path) -> Vec<PathBuf> {
 }
 
 fn markers(entry: &Path) -> BTreeSet<Key> {
-    let re = regex::Regex::new(r"--\s*expect:\s*([A-Za-z]{2}\d{3}(?:\s*,\s*[A-Za-z]{2}\d{3})*)")
+    let re = regex::Regex::new(r"--\s*expect:\s*(luau-shield\d{3}(?:\s*,\s*luau-shield\d{3})*)")
         .unwrap();
     let mut out = BTreeSet::new();
     for file in lua_files(entry) {
@@ -47,7 +47,7 @@ fn markers(entry: &Path) -> BTreeSet<Key> {
         for (i, line) in text.lines().enumerate() {
             if let Some(caps) = re.captures(line) {
                 for code in caps[1].split(',') {
-                    out.insert((display(&file), i + 1, code.trim().to_ascii_uppercase()));
+                    out.insert((display(&file), i + 1, code.trim().to_ascii_lowercase()));
                 }
             }
         }

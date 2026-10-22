@@ -107,7 +107,7 @@ pub(crate) struct Pending<'a> {
     rate_limited: bool,
 }
 
-/// Per-handler bookkeeping for LS007.
+/// Per-handler bookkeeping for luau-shield007.
 #[derive(Default)]
 pub(crate) struct EntryCtx {
     expensive: Vec<String>,

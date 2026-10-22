@@ -83,7 +83,7 @@ luau-shield check src                   # analyse a directory
 luau-shield check --format json -o report.json
 luau-shield check --format sarif -o luau-shield.sarif
 luau-shield check --min-severity high   # only high and critical findings
-luau-shield check --disable LS007       # turn a rule off
+luau-shield check --disable luau-shield007       # turn a rule off
 luau-shield rules                       # list the rules
 luau-shield init                        # write a starter luau-shield.toml
 ```
@@ -96,7 +96,7 @@ luau-shield init                        # write a starter luau-shield.toml
 | `--project FILE` | Rojo project used to map files to the DataModel (default: `default.project.json`). |
 | `-s, --min-severity LEVEL` | Only report findings at or above `low`, `medium`, `high` or `critical`. |
 | `--fail-on LEVEL` | Exit with code 1 when a reported finding is at or above this severity (`never` to always succeed). Default: `low`. |
-| `--disable RULES`, `--only RULES` | Comma-separated rule codes (`LS003`) or names (`unverified-client-instance`). |
+| `--disable RULES`, `--only RULES` | Comma-separated rule codes (`luau-shield003`) or names (`unverified-client-instance`). |
 | `--explain`, `--ollama-model MODEL` | Ask a local model for a detailed explanation (see below). |
 | `--color auto\|always\|never` | Colors in text output (`NO_COLOR` is honoured). |
 | `-q, --quiet` | Only print the summary line. |
@@ -115,7 +115,7 @@ directory names such as `server`, `client` and `shared` are used.
 ## Example output
 
 ```text
-high[LS001]: Client-controlled value written to currency, stats or saved data
+high[luau-shield001]: Client-controlled value written to currency, stats or saved data
   --> examples/vulnerable-game/src/server/Modules/DataManager.luau:74:3
    |
 73 |     for key, value in changes do
@@ -141,7 +141,7 @@ high[LS001]: Client-controlled value written to currency, stats or saved data
            which entry is written, for example `Coins` or another player's save. Let the server
            decide amounts (look prices and rewards up in a server table by an allow-listed id).
            [...]
-   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/LS001.md
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md
 
 Found 27 problems (5 critical, 15 high, 1 medium, 6 low) in 15 files.
 ```
@@ -155,20 +155,20 @@ Try it yourself: `luau-shield check examples/vulnerable-game`, then
 
 | Code | Name | Severity | Finds |
 | --- | --- | --- | --- |
-| [LS001](docs/rules/LS001.md) | `untrusted-economy-write` | high | client values written to currency, leaderstats, player data, DataStores, MemoryStores |
-| [LS002](docs/rules/LS002.md) | `untrusted-instance-property` | high | client values assigned to `Position`, `CFrame`, `Health`, `WalkSpeed`, `Parent`, `Text`... |
-| [LS003](docs/rules/LS003.md) | `unverified-client-instance` | high | Instances sent by the client used without an ownership or location check |
-| [LS004](docs/rules/LS004.md) | `untrusted-code-execution` | critical | client values reaching `loadstring`, `require`, `getfenv()[x]` |
-| [LS005](docs/rules/LS005.md) | `untrusted-http-request` | high | client values in the URL, headers or body of `HttpService` requests |
-| [LS006](docs/rules/LS006.md) | `server-invokes-client` | medium | `RemoteFunction:InvokeClient` on the server (can yield forever) |
-| [LS007](docs/rules/LS007.md) | `remote-without-rate-limit` | low | remote handlers doing expensive work (`*Async`, `Instance.new`, `:Clone()`) with no rate limit |
-| [LS008](docs/rules/LS008.md) | `client-exposed-secret` | critical | webhooks, API keys and tokens in code that replicates to clients |
+| [luau-shield001](docs/rules/luau-shield001.md) | `untrusted-economy-write` | high | client values written to currency, leaderstats, player data, DataStores, MemoryStores |
+| [luau-shield002](docs/rules/luau-shield002.md) | `untrusted-instance-property` | high | client values assigned to `Position`, `CFrame`, `Health`, `WalkSpeed`, `Parent`, `Text`... |
+| [luau-shield003](docs/rules/luau-shield003.md) | `unverified-client-instance` | high | Instances sent by the client used without an ownership or location check |
+| [luau-shield004](docs/rules/luau-shield004.md) | `untrusted-code-execution` | critical | client values reaching `loadstring`, `require`, `getfenv()[x]` |
+| [luau-shield005](docs/rules/luau-shield005.md) | `untrusted-http-request` | high | client values in the URL, headers or body of `HttpService` requests |
+| [luau-shield006](docs/rules/luau-shield006.md) | `server-invokes-client` | medium | `RemoteFunction:InvokeClient` on the server (can yield forever) |
+| [luau-shield007](docs/rules/luau-shield007.md) | `remote-without-rate-limit` | low | remote handlers doing expensive work (`*Async`, `Instance.new`, `:Clone()`) with no rate limit |
+| [luau-shield008](docs/rules/luau-shield008.md) | `client-exposed-secret` | critical | webhooks, API keys and tokens in code that replicates to clients |
 
 Each rule page explains what is detected, the exploit, what counts as a
 check, and the known limits. Short examples follow (the handlers come from a
 `*.server.luau` script; `Remotes` is a folder of RemoteEvents).
 
-### LS001: untrusted-economy-write
+### luau-shield001: untrusted-economy-write
 
 ```lua
 -- Vulnerable: the client decides how many coins it gets (1e9, -1e9, NaN...)
@@ -192,7 +192,7 @@ If a number really has to come from the client, check its type, both bounds
 `if n <= 0 or n > 100 then return end` alone lets NaN through, and luau-shield
 says so.
 
-### LS002: untrusted-instance-property
+### luau-shield002: untrusted-instance-property
 
 ```lua
 -- Vulnerable: teleport anywhere
@@ -212,7 +212,7 @@ Remotes.Dash.OnServerEvent:Connect(function(player, position)
 end)
 ```
 
-### LS003: unverified-client-instance
+### luau-shield003: unverified-client-instance
 
 ```lua
 -- Vulnerable: IsA proves it is a Tool, not that it is this player's Tool
@@ -230,7 +230,7 @@ Remotes.Unequip.OnServerEvent:Connect(function(player, tool)
 end)
 ```
 
-### LS004: untrusted-code-execution
+### luau-shield004: untrusted-code-execution
 
 ```lua
 -- Vulnerable: remote code execution on the server
@@ -250,7 +250,7 @@ Remotes.Console.OnServerEvent:Connect(function(player, name)
 end)
 ```
 
-### LS005: untrusted-http-request
+### luau-shield005: untrusted-http-request
 
 ```lua
 -- Vulnerable: the client controls the path of a request sent by your server
@@ -260,7 +260,7 @@ end)
 ```
 
 ```lua
--- Fixed: only a numeric id reaches the URL (and the remote is rate limited, see LS007)
+-- Fixed: only a numeric id reaches the URL (and the remote is rate limited, see luau-shield007)
 Remotes.Lookup.OnServerEvent:Connect(function(player, userId)
 	local id = tonumber(userId)
 	if not id then return end
@@ -268,7 +268,7 @@ Remotes.Lookup.OnServerEvent:Connect(function(player, userId)
 end)
 ```
 
-### LS006: server-invokes-client
+### luau-shield006: server-invokes-client
 
 ```lua
 -- Vulnerable: an exploiter never answers and this thread waits forever
@@ -285,7 +285,7 @@ Remotes.Trade.OnServerEvent:Connect(function(player, partner)
 end)
 ```
 
-### LS007: remote-without-rate-limit
+### luau-shield007: remote-without-rate-limit
 
 ```lua
 -- Vulnerable: a DataStore write on every request
@@ -305,7 +305,7 @@ Remotes.Save.OnServerEvent:Connect(function(player)
 end)
 ```
 
-### LS008: client-exposed-secret
+### luau-shield008: client-exposed-secret
 
 ```lua
 -- Vulnerable (in a LocalScript or a ModuleScript in ReplicatedStorage):
@@ -354,8 +354,8 @@ fail-on = "high"
 ignore = ["src/dev/**"]
 
 [rules]
-LS007 = "off"          # disable a rule
-LS006 = "high"         # change its severity
+luau-shield007 = "off"          # disable a rule
+luau-shield006 = "high"         # change its severity
 
 # Your own validation functions: values that pass them are trusted.
 [[sanitizers]]
@@ -364,7 +364,7 @@ function = "Validate.amount"
 # Your own dangerous functions.
 [[sinks]]
 function = "Economy.addCoins"
-rule = "LS001"
+rule = "luau-shield001"
 arguments = [2]
 
 # Functions whose parameters come from the client (other networking libraries).
@@ -381,13 +381,13 @@ When luau-shield is wrong, or the risk is accepted, add a comment with the
 rule and a reason, on the line of the finding or on the line above it:
 
 ```lua
-coins.Value += amount -- luau-shield-ignore: LS001 amount is validated by the gateway
+coins.Value += amount -- luau-shield-ignore: luau-shield001 amount is validated by the gateway
 
--- luau-shield-ignore: LS003 doors are re-checked by DoorService
+-- luau-shield-ignore: luau-shield003 doors are re-checked by DoorService
 door:Destroy()
 ```
 
-`-- luau-shield-ignore-file: LS007 reason` anywhere in a file suppresses a rule
+`-- luau-shield-ignore-file: luau-shield007 reason` anywhere in a file suppresses a rule
 for the whole file. Suppressed findings are counted in the summary.
 
 ## Continuous integration
@@ -489,7 +489,7 @@ cargo fmt --all
 
 To add a test case, drop a file (or a small Rojo project) in
 `tests/fixtures/<RULE>/vulnerable` or `safe` and mark expected findings with
-`-- expect: LS001` at the end of the line (see
+`-- expect: luau-shield001` at the end of the line (see
 [tests/fixtures/README.md](tests/fixtures/README.md)).
 
 ## License

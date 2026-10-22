@@ -1,0 +1,9 @@
+{
+  "name": "fixture",
+  "tree": {
+    "$className": "DataModel",
+    "ServerScriptService": {
+      "$path": "src/server"
+    }
+  }
+}

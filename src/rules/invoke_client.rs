@@ -1,4 +1,4 @@
-//! LS006: the server calling `RemoteFunction:InvokeClient`, or assigning
+//! luau-shield006: the server calling `RemoteFunction:InvokeClient`, or assigning
 //! `OnClientInvoke` in server code.
 
 use crate::analysis::{compact, span_of, token_name};

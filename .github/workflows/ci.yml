@@ -121,7 +121,7 @@ jobs:
           fi
 
           # Every result must carry one of the documented rule ids.
-          jq -e '[.runs[].results[] | .ruleId | test("^LS00[1-8]$")] | all' "$VULNERABLE_SARIF" > /dev/null \
+          jq -e '[.runs[].results[] | .ruleId | test("^luau-shield00[1-8]$")] | all' "$VULNERABLE_SARIF" > /dev/null \
             || { echo "::error::A result has an unknown ruleId."; exit 1; }
 
           echo "Results per rule:"

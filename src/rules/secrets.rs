@@ -1,4 +1,4 @@
-//! LS008: secrets hard-coded in code whose source is sent to clients.
+//! luau-shield008: secrets hard-coded in code whose source is sent to clients.
 
 use crate::analysis::{compact, span_of, token_name};
 use crate::finding::{Loc, Span};

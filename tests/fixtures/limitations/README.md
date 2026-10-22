@@ -13,3 +13,4 @@ They document, with real code, the limits listed in the README.
 | `alias-validation.server.luau` | false positive | a check on a copy of a variable does not protect the original variable |
 | `pcall-validation.server.luau` | false positive | `assert`s inside a function run with `pcall` are not used as guards |
 | `dynamic-module/` | false negative | a module chosen at runtime (`require(Shops[mode])`) cannot be resolved |
+| `pattern-checked-inventory-key.server.luau` | false negative | an anchored pattern is accepted for keys, but it only checks the format, not that the item exists |

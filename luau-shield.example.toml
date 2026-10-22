@@ -7,11 +7,13 @@
 #
 # Full reference: https://github.com/Topogamer0/luau-shield/blob/main/docs/configuration.md
 
-# Lowest severity that is reported: "low" | "medium" | "high" | "critical".
+# Lowest severity that is reported: "info" | "low" | "medium" | "high" |
+# "critical". "info" also shows findings downgraded by a permission guard
+# ("admin only").
 min-severity = "low"
 
 # Exit with code 1 when a reported finding has at least this severity:
-# "low" | "medium" | "high" | "critical" | "never".
+# "info" | "low" | "medium" | "high" | "critical" | "never".
 fail-on = "low"
 
 # Rojo project used to map files to instances (ServerScriptService,
@@ -34,7 +36,7 @@ trust-unresolved-validators = true
 max-call-depth = 6
 
 # Per rule: "off", "on", a severity that replaces the default one
-# ("low" | "medium" | "high" | "critical"), or a table such as
+# ("info" | "low" | "medium" | "high" | "critical"), or a table such as
 # { enabled = true, severity = "medium" }.
 [rules]
 # luau-shield001 = "on"    # untrusted-economy-write        (high)
@@ -69,6 +71,17 @@ max-call-depth = 6
 # [[sources]]
 # function = "*.Remotes.*"
 # trusted-parameters = 1         # leading parameters (after self) that are trusted, usually the player
+
+# Permission checks. When code only runs after one of these succeeds for the
+# player who sent the request (`if not Admins.isAdmin(player) then return end`),
+# findings there are reported as "info" ("admin only"), which is below the
+# default min-severity. Built-in names: isAdmin, isOwner, isCreator,
+# isGameOwner, isModerator, isMod, isStaff, isDeveloper, isDev, isSuperAdmin,
+# isHeadAdmin, hasAdmin, hasAdminRights, hasAdminAccess, hasAdminPermission(s),
+# hasPermission(s) (case and underscores are ignored).
+[guards]
+# functions = ["Admins.isAdmin", "PermissionService:Check"]   # a single name matches any receiver
+defaults = true                  # false: only trust the functions listed above
 
 # Settings for --explain (a local Ollama server; host from OLLAMA_HOST,
 # default http://localhost:11434).

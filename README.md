@@ -57,11 +57,11 @@ This adds a line to your `rokit.toml`:
 
 ```toml
 [tools]
-luau-shield = "Topogamer0/luau-shield@0.1.0"
+luau-shield = "Topogamer0/luau-shield@0.2.0"
 ```
 
-Aftman and Foreman work the same way (`luau-shield = "Topogamer0/luau-shield@0.1.0"`
-in `aftman.toml`, or `luau-shield = { github = "Topogamer0/luau-shield", version = "0.1.0" }`
+Aftman and Foreman work the same way (`luau-shield = "Topogamer0/luau-shield@0.2.0"`
+in `aftman.toml`, or `luau-shield = { github = "Topogamer0/luau-shield", version = "0.2.0" }`
 in `foreman.toml`).
 
 Prebuilt binaries for Windows x64, macOS (Apple Silicon and Intel) and Linux
@@ -94,7 +94,7 @@ luau-shield init                                 # write a starter luau-shield.t
 | `-o, --output FILE` | Write the report to a file instead of stdout. |
 | `-c, --config FILE` | Configuration file (default: `luau-shield.toml` in the checked directory or a parent). `--no-config` ignores it. |
 | `--project FILE` | Rojo project used to map files to the DataModel (default: `default.project.json`). |
-| `-s, --min-severity LEVEL` | Only report findings at or above `low`, `medium`, `high` or `critical`. |
+| `-s, --min-severity LEVEL` | Only report findings at or above `info`, `low`, `medium`, `high` or `critical`. Default: `low` (`info` findings, such as admin-only code, are hidden). |
 | `--fail-on LEVEL` | Exit with code 1 when a reported finding is at or above this severity (`never` to always succeed). Default: `low`. |
 | `--disable RULES`, `--only RULES` | Comma-separated rule codes (`luau-shield003`) or names (`unverified-client-instance`). |
 | `--explain`, `--ollama-model MODEL` | Ask a local model for a detailed explanation (see below). |
@@ -336,12 +336,17 @@ local WEBHOOK = HttpService:GetSecret("discord_webhook")
    and your own [custom sources](docs/configuration.md).
 4. **Abstract interpretation**: the server code is executed symbolically. Each
    value remembers which untrusted data it contains and which checks it
-   passed. Branches are followed separately and merged, loops are iterated,
-   calls into local functions and required modules are analysed with the
-   actual arguments, validation functions are summarised.
+   passed. Branches are followed separately and merged, loops are iterated
+   (field by field over tables with known keys), calls into local functions
+   and required modules are analysed with the actual arguments, validation
+   functions are summarised, and calls too deep to follow are replaced by a
+   summary of what they return.
 5. **Sinks**: every rule decides whether the checks are enough for its sink;
    for example a number written to a currency needs a type check, both bounds
    and a NaN check, while an Instance needs an ownership or location check.
+   Code that only runs after a permission check on the sender
+   (`Admins.isAdmin(player)`) is reported as `info` ("admin only"), hidden by
+   default.
 
 The exact semantics (what counts as a check, what propagates) are documented
 in [docs/analysis.md](docs/analysis.md).
@@ -373,6 +378,11 @@ arguments = [2]
 [[sources]]
 function = "Net.handlers.*"
 trusted-parameters = 1
+
+# Your own permission checks (isAdmin, hasPermission... are built in): code
+# after them is reported as "info" ("admin only").
+[guards]
+functions = ["Staff.canModerate"]
 ```
 
 Full reference: [docs/configuration.md](docs/configuration.md).
@@ -408,7 +418,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: Topogamer0/luau-shield@v0.1.0
+      - uses: Topogamer0/luau-shield@v0.2.0
         with:
           path: src
           fail-on: high

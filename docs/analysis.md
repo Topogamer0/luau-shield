@@ -62,7 +62,12 @@ A value derived from untrusted data is untrusted. Taint flows through:
 - arithmetic, concatenation (`..`), string interpolation, `if`-expressions,
   `and`/`or`, type assertions (`x :: number`), parentheses;
 - table constructors and fields: `{ amount = x }`, `data.amount`, `data[k]`,
-  nested tables, `table.insert`, `{...}`, `select`, `table.unpack`;
+  nested tables, `table.insert`, `{...}`, `select`, `table.unpack`. Fields
+  are tracked one by one, also through loops: `for key, value in patch do
+  copy[key] = value end` over a table built by the server with known keys
+  (`{ coins = amount }`) runs once per field, so `copy.level` stays empty
+  instead of inheriting `amount`. A table sent by the client has unknown
+  keys: every field of the copy is client-controlled;
 - string library functions (`string.format`, `s:sub()`, `s:lower()`, ...),
   `tostring`, `tonumber`, `math.*`, `HttpService:JSONEncode/JSONDecode`;
 - calls to **local functions of the same file** (the callee is analysed with
@@ -83,6 +88,14 @@ A value derived from untrusted data is untrusted. Taint flows through:
   is analysed when exactly one class required by the file defines `addCoins`;
 - calls to unknown functions: the result is conservatively considered tainted
   if any argument is tainted.
+
+Calls deeper than `max-call-depth` (or beyond the time budget of a handler)
+are not followed one by one. For those, luau-shield analyses the function
+once on its own, with placeholder arguments, and records what it returns in
+terms of its parameters, including the checks it made: a sanitizer reached
+through many layers (`Look.fromV1(raw)` → ... → `Look.sanitize(raw)` →
+`clampIndex(v, 10, 1)`) still protects its result. Sinks inside such deep
+functions are not reported.
 
 Reading a value out of a **server-owned** table with an untrusted key does
 *not* produce untrusted data: `PRICES[itemId]` is a server value (it may be
@@ -125,6 +138,11 @@ A value accumulates *facts*. Each rule decides which facts are enough
 
 A boolean value that passed a type check (`typeof(x) == "boolean"`) is always
 considered safe: there are only two possible values.
+
+A string extracted with a pattern made only of digits, signs and dots
+(`string.match(text, "(%-?%d+)")`, `s:match("^%d+$")`) can never be turned
+into NaN by `tonumber`: the number gets *NaN rejected* (but no bounds: a very
+long digit string still becomes `math.huge`).
 
 Checks keep working when their parts are stored in locals first, as long as
 the check is on the original variable:
@@ -181,6 +199,34 @@ with `is`, `validate`, `verify`, `check`, `sanitize`, `assert` or `ensure`
 This keeps false positives low; disable it with
 `trust-unresolved-validators = false` in the configuration.
 
+Sanitizers that **build a new value** are followed through their return
+value: every field of the table below is checked (type, NaN, integer, range,
+with a default), so the result is safe wherever it is stored:
+
+```lua
+local function clampIndex(v, max, default)
+	if type(v) ~= "number" or v ~= v or v % 1 ~= 0 or v < 1 or v > max then return default end
+	return v
+end
+function Look.sanitize(raw)
+	local input = if type(raw) == "table" then raw else {}
+	return { hair = clampIndex(input.hair, 10, 1), skin = clampIndex(input.skin, 5, 1) }
+end
+```
+
+When such a function cannot be followed (it lives in a package, or it is
+built dynamically) or does not check every field on every path, findings on
+its result suggest declaring it as a [sanitizer](configuration.md#sanitizers).
+
+### Permission guards
+
+Code that only runs after a permission check on the sender
+(`if not Admins.isAdmin(player) then return end`) is admin-only: findings
+there are reported with severity `info` ("admin only"), which is hidden by
+default. Code execution (luau-shield004) is never downgraded. See
+[Guards](configuration.md#guards) for the names that count and how to add
+your own.
+
 ## 5. Sinks
 
 Each rule has its own sinks and its own idea of "checked enough":
@@ -208,8 +254,9 @@ Static analysis is an approximation and can be wrong in both directions:
   unresolved modules propagate taint conservatively.
 - Tables are tracked by value: aliasing (two variables pointing to the same
   table) is approximated.
-- Loops are analysed a bounded number of times; recursion and deeply nested
-  calls are cut off (default depth: 6).
+- Loops are analysed a bounded number of times; recursion is cut off, and
+  calls deeper than `max-call-depth` (default 6) are replaced by a summary of
+  what the function returns: sinks inside them are not reported.
 - The heuristics that recognise "currency", "stats" and "DataStore" objects
   rely on names (`leaderstats`, `Coins`, `Cash`, `GetDataStore`, ...).
 - A check that is present but wrong (for example a bound that is too large)

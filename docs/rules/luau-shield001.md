@@ -290,6 +290,25 @@ What is **not** a check:
 - **Unanchored searches.** `string.find(key, tostring(player.UserId))` or
   `key:match("%d+")` do not constrain the rest of the string.
 
+**Admin-only code is reported as `info`.** When the write only runs after a
+permission check on the sender (`if not Admins.isAdmin(player) then return
+end`, `Permissions:hasPermission(player, "EditCoins")`), the finding is
+downgraded to `info` with "(admin only: ...)" in the message, and hidden at
+the default `min-severity`. The value is still unchecked, so a mistyped
+command or a stolen admin account can corrupt data; run with
+`--min-severity info` to review these writes. See
+[Guards](../configuration.md#guards) for the names that count.
+
+A number read from a chat message with a digits-only pattern,
+`tonumber(string.match(text, "(%-?%d+)"))`, is never NaN; add bounds
+(`math.clamp`) and it is fully checked.
+
+**Sanitizers that build a new table** count when luau-shield can follow them
+(including through deep call chains): every field must come out of a check.
+When the function cannot be followed, or misses a field, the fix of the
+finding names it and suggests declaring it as a
+[sanitizer](../configuration.md#sanitizers) if it really validates the value.
+
 ## Limitations
 
 - **Names decide what counts as economy.** Stat objects and data fields are

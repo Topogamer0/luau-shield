@@ -447,6 +447,7 @@ impl<'a> Analyzer<'a> {
             }
             self.budget = ENTRY_BUDGET;
             self.guard = None;
+            self.branch_depth = 0;
             let mut state = base.clone();
             let (args, rest) = args;
             self.call_closure(

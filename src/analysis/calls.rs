@@ -133,10 +133,23 @@ fn instantiate<'a>(
                 let Some(arg) = args.get(i) else {
                     continue;
                 };
+                // The summary compared parameters with each other as if they
+                // were trusted (`clamp(v, lo, hi)`): bounds, allow-lists and
+                // ownership relative to an argument the client controls at
+                // this call prove nothing.
+                let relative = args
+                    .iter()
+                    .enumerate()
+                    .any(|(j, a)| j != i && a.is_tainted());
+                let made = if relative {
+                    flow.checks & !(check::BOUNDS | check::ALLOWLIST | check::OWNERSHIP)
+                } else {
+                    flow.checks
+                };
                 for actual in arg.deep_flows() {
                     let stepped = actual.with_step(loc, format!("returned by `{name}`"));
                     out.add_flows([Flow {
-                        checks: actual.checks | flow.checks,
+                        checks: actual.checks | made,
                         raw: actual.raw && flow.raw,
                         instance_data: actual.instance_data || flow.instance_data,
                         ..stepped

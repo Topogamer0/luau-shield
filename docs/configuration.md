@@ -54,8 +54,8 @@ luau-shield exit with code `2`.
 ## Reference
 
 ```toml
-min-severity = "low"                          # low | medium | high | critical
-fail-on = "low"                               # low | medium | high | critical | never
+min-severity = "low"                          # info | low | medium | high | critical
+fail-on = "low"                               # info | low | medium | high | critical | never
 project = "default.project.json"              # Rojo project used to map files to instances
 ignore = ["Packages/**", "**/*.spec.luau"]    # globs relative to the config file directory
 trust-unresolved-validators = true
@@ -79,6 +79,10 @@ arguments = [2]
 function = "*.Client.*"
 trusted-parameters = 1
 
+[guards]
+functions = ["Admins.isAdmin"]
+defaults = true
+
 [explain]
 model = "qwen2.5-coder:7b"
 timeout-seconds = 60
@@ -88,8 +92,8 @@ timeout-seconds = 60
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `min-severity` | string | `"low"` | Lowest severity that is reported: `low`, `medium`, `high` or `critical`. Findings below it are not shown, not written to the report and do not affect the exit code. |
-| `fail-on` | string | `"low"` | Exit with code `1` when a reported finding has at least this severity. `low` means any reported finding fails; `never` always exits `0` (unless there is an error). |
+| `min-severity` | string | `"low"` | Lowest severity that is reported: `info`, `low`, `medium`, `high` or `critical`. Findings below it are not shown, not written to the report and do not affect the exit code. `info` is only used for findings downgraded by a [permission guard](#guards). |
+| `fail-on` | string | `"low"` | Exit with code `1` when a reported finding has at least this severity. `low` means any reported finding except `info` fails; `never` always exits `0` (unless there is an error). |
 | `project` | string | `default.project.json` when it exists | Rojo project file used to map files to instances (`ServerScriptService`, `ReplicatedStorage`, ...). This decides where code runs: see [Where code runs](analysis.md#1-where-code-runs). Without a project, directory names are used as hints. |
 | `ignore` | array of globs | `[]` | Files and directories that are not analysed. Globs are relative to the directory of the configuration file: `*` matches inside one path segment, `**` matches any number of directories. Directories named `Packages`, `DevPackages`, `ServerPackages`, `node_modules` and `.git` are always skipped. |
 | `trust-unresolved-validators` | boolean | `true` | When a guard calls a function that cannot be resolved and whose name starts with `is`, `validate`, `verify`, `check`, `sanitize`, `assert` or `ensure` (for example `Validator.isValidItem(x)` from a package), trust it to validate its arguments. Set to `false` to require real checks or [sanitizers](#sanitizers). |
@@ -131,7 +135,7 @@ Each value is one of:
 | --- | --- |
 | `"off"` | The rule does not run. |
 | `"on"` | The rule runs with its default severity. |
-| `"low"`, `"medium"`, `"high"`, `"critical"` | The rule runs with this severity. |
+| `"info"`, `"low"`, `"medium"`, `"high"`, `"critical"` | The rule runs with this severity (`"info"` hides it unless `min-severity = "info"`). |
 | `{ enabled = true, severity = "medium" }` | Table form of the two settings; both keys are optional. |
 
 ```toml
@@ -228,6 +232,68 @@ Which facts are enough depends on the rule:
 
 When in doubt, keep the default `checks = "all"`; list facts only when the
 function really checks less than everything.
+
+luau-shield tells you when a sanitizer declaration may be missing. When the
+value of a finding comes out of a function named like a sanitizer (its name
+contains `sanitize`, `validate`, `clean`, `normalize`, `verify`, `check`,
+`coerce`, `clamp`, `filter`, `safe`, `parse` or `strict`) that luau-shield
+could not follow, or whose checks it could not prove on every path, the fix of
+the finding ends with a suggestion such as:
+
+```text
+The value comes from `Look.sanitize`, which luau-shield could not follow: if
+`Look.sanitize` validates it, declare it as a sanitizer (`[[sanitizers]]` with
+`function = "Look.sanitize"` in luau-shield.toml).
+```
+
+Before you do, read the function: the declaration makes luau-shield trust it
+completely.
+
+## Guards
+
+Admin tools legitimately let some players set values: an admin panel that
+sets a player's coins, a `;give` chat command. When code only runs after a
+**permission check on the player who sent the request** succeeds, findings in
+that code are reported with severity `info` and the message ends with
+`(admin only: after Admins.isAdmin(sender))`. `info` is below the default
+`min-severity`, so these findings are hidden unless you ask for them with
+`--min-severity info`:
+
+```lua
+local function onCommand(sender, text)
+	if not Admins.isAdmin(sender) then return end
+	data[sender].Coins += tonumber(text) or 0 -- info: admin only
+end
+```
+
+A call is a permission check when:
+
+- its name (the last segment: `Admins.isAdmin`, `self:isAdmin`, `is_admin`)
+  is one of the built-in names, ignoring case and underscores: `isAdmin`,
+  `isSuperAdmin`, `isHeadAdmin`, `isOwner`, `isGameOwner`, `isCreator`,
+  `isModerator`, `isMod`, `isStaff`, `isDeveloper`, `isDev`, `hasAdmin`,
+  `hasAdminRights`, `hasAdminAccess`, `hasAdminPermission(s)`,
+  `hasPermission(s)`; or it matches a pattern in `[guards] functions`;
+- one argument is the sender (`player`, `player.UserId`, `player.Name`) and
+  every other argument is a constant (`hasPermission(player, "Ban")`). A check
+  on a player or id chosen by the client (`isAdmin(target)`), or on another
+  object (`isOwner(player, plot)` checks who owns a plot, not who the player
+  is), is not a permission check.
+
+Code execution (luau-shield004) is never downgraded: running code chosen by a
+chat message stays critical even for admins, because a stolen admin account
+or a wrong asset id runs arbitrary code on the server.
+
+```toml
+[guards]
+functions = ["Staff.canModerate", "PermissionService:Check"]
+defaults = true
+```
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `functions` | array of [function patterns](#function-patterns) | `[]` | Your own permission checks. A pattern with a single name (`"canModerate"`) matches that name on any receiver. |
+| `defaults` | boolean | `true` | Also trust the built-in names above. Set to `false` if a function with one of these names in your code does not check permissions. |
 
 ## Sinks
 

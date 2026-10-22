@@ -246,10 +246,11 @@ What is **not** enough:
   under such a name is reported, for example
   `local TOKEN_ICON = "rbxassetid://1234567890123"`. Rename the variable to
   a name without those words (`COIN_ICON`) or suppress the finding.
-- **Placeholders are guessed.** A value containing `your`, `here`,
-  `example`, `xxxx`, `todo`, `changeme`, `<` or `{` is taken for a
-  placeholder, so a real password that happens to contain one of them
-  (`"WhereIsMyPassword42"`) is missed.
+- **Placeholders are guessed.** A value containing the words `your`, `here`,
+  `example`, `insert`, `todo`, `replace` or `redacted`, or `xxxx`,
+  `changeme`, `...`, `<` or `{` anywhere, is taken for a placeholder, so a
+  real secret written like `"my-key-HERE-2024"` is missed. Words inside other
+  words (`"WhereIsMyPassword42"`) do not count.
 - **Public keys are reported like private ones.** Some services hand out
   keys that are meant to be public (publishable keys, client ids). If the
   value is stored under a credential-like name, or uses a format above,

@@ -282,18 +282,11 @@ rejection) before it goes into `leaderstats`.
   are not followed either (see [Limits](../analysis.md#6-limits)).
 - **Read-only methods come from a fixed list.** A harmless method that is not
   in the list above (for example `GetDebugId()`) counts as a use.
-- **A verified client Instance is not accepted as an anchor.** When the client
-  sends both the plot and the block, checking the plot
-  (`plot:GetAttribute("Owner") == player.UserId`) and then
-  `block:IsDescendantOf(plot)` is safe, but the block is still reported,
-  because the container is a client value. Look the plot up on the server
-  instead (`Plots:FindFirstChild(tostring(player.UserId))`), which also saves
-  an argument.
-- **The `Owner` ObjectValue is recognised in its direct form.**
-  `model.Owner.Value == player` is an ownership check; reading the same
-  object through a local (`local owner = model:FindFirstChild("Owner")`, then
-  `owner.Value == player`) is not linked back to `model`, and later uses of
-  `model` are reported. Use the direct form or an `Owner` attribute.
+- **Ownership is followed one step.** A client plot whose owner was checked
+  (`plot:GetAttribute("Owner") == player.UserId`) is a valid anchor for
+  `block:IsDescendantOf(plot)`, and checking a value read from the Instance
+  (`local owner = model:FindFirstChild("Owner")`, then `owner.Value == player`)
+  verifies `model`. Longer chains through several locals are not followed.
 - **Distance checks trust the character's position.** The client controls
   the physics of its own character, so an exploiter can teleport next to each
   target before firing the remote. A distance check stops "from anywhere"

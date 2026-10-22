@@ -333,10 +333,8 @@ What is **not** a check:
   NaN-safe in other ways and is still reported:
   `if x % 1 ~= 0 then return end` (`NaN % 1` is NaN), `math.max(1, x)`
   (Luau keeps the first argument when a later one is NaN, so the order
-  matters), or `t.number(x)` followed by bounds written as
-  `if x < 1 or x > 100 then return end` (the real `t.number` rejects NaN,
-  but luau-shield gives it only the type fact). Add an explicit `x ~= x`
-  test or use `t.numberConstrained`.
+  matters). Add an explicit `x ~= x` test, use `t.number` (which rejects NaN)
+  or `t.numberConstrained`.
 - **Checks on a different copy.** `local amount = req.amount` taken *before*
   `req.amount` is checked does not receive the facts of that check. Check
   the variable you write, or copy after checking.

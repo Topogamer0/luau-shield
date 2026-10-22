@@ -312,10 +312,6 @@ validation function only contributes the facts it actually checks.
   `GetNonChatStringForUserAsync` and `GetChatForUserAsync` is accepted even
   when it is shown to everybody; text displayed to other players needs
   `GetNonChatStringForBroadcastAsync`.
-- **`cond and A or B` with a client `cond` is reported.** `and` can return its
-  left operand, so the result is treated as client-controlled even when `A`
-  and `B` are server values. Write it as `if cond then A else B`, which is not
-  reported.
 - **NaN is not required.** A check written as `if x < 8 or x > 32 then return end`
   lets NaN through, and a NaN position or velocity can break physics. Add
   `if x ~= x then return end` where that matters.

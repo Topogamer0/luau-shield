@@ -74,6 +74,9 @@ A value derived from untrusted data is untrusted. Taint flows through:
   `require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Util"))`,
   `require("./Economy")` and `.luaurc` aliases (`require("@shared/Util")`).
   Instance paths are mapped to files through the Rojo project tree;
+- method references passed with their object, as in
+  `pcall(store.SetAsync, store, key, value)`, which is analysed as
+  `store:SetAsync(key, value)`;
 - calls to unknown functions: the result is conservatively considered tainted
   if any argument is tainted.
 
@@ -109,9 +112,9 @@ A value accumulates *facts*. Each rule decides which facts are enough
 | **upper bound** | `x < c`, `x <= c`, `math.min(x, c)`, `math.clamp(x, a, b)`, `#x <= c` (length of strings/tables) |
 | **NaN rejected** | `x == x`, `x ~= x` → reject, or a comparison that must be **true** for execution to continue (`if x > 0 and x <= 100 then ... end`). Comparisons that must be *false* (`if x <= 0 or x > 100 then return end`) do **not** reject NaN, because every comparison with NaN is false. `math.clamp`, `math.min` and `math.max` return NaN for NaN. |
 | **allow-listed** | `x == "literal"`, `ALLOWED[x]` truthy (server table), `table.find(ALLOWED, x)`, `ALLOWED[x] ~= nil`, `folder:FindFirstChild(x)` non-nil |
-| **pattern** | `string.match(x, "^...$")` / `x:match("^%w+$")` with a pattern anchored at both ends |
+| **pattern** | `string.match(x, "^...$")` / `x:match("^%w+$")` with a pattern anchored at both ends (written inline or stored in a constant) |
 | **length** | `#x <= c` / `#x < c` / `string.len(x) <= c` |
-| **ownership / location** (Instances) | `x:IsDescendantOf(...)`, `y:IsAncestorOf(x)`, `x.Parent == ...`, `x:FindFirstAncestor...(...) == ...`, `Players:GetPlayerFromCharacter(...) == player`, `x:GetAttribute("Owner") == player.UserId`, `x.Owner.Value == player`, distance checks such as `(x.Position - root.Position).Magnitude <= 10` or `player:DistanceFromCharacter(x.Position) < 10` |
+| **ownership / location** (Instances) | `x:IsDescendantOf(...)`, `y:IsAncestorOf(x)`, `x.Parent == ...`, `x:FindFirstAncestor...(...) == ...`, `Players:GetPlayerFromCharacter(...) == player`, `x:GetAttribute("Owner") == player.UserId`, `x.Owner.Value == player`, distance checks such as `(x.Position - root.Position).Magnitude <= 10` or `player:DistanceFromCharacter(x.Position) < 10` (the other point must be server data: a distance to a position sent by the client proves nothing). The container or reference point may itself be a client Instance whose ownership was already verified |
 | **filtered text** | the result of `TextService:FilterStringAsync(...)` + `GetNonChatStringForBroadcastAsync()` / `GetChatForUserAsync()` / `GetNonChatStringForUserAsync()`, `Chat:FilterStringForBroadcast(...)` |
 | **url-encoded** | `HttpService:UrlEncode(x)` |
 | **validated** (everything) | a call to a [custom sanitizer](configuration.md#sanitizers), or a validation function analysed by luau-shield (see below) |
@@ -120,7 +123,7 @@ A boolean value that passed a type check (`typeof(x) == "boolean"`) is always
 considered safe: there are only two possible values.
 
 Checkers built with the [`t`](https://github.com/osyrisrblx/t) library give the
-facts of the checkers they are made of: `t.number` gives *type*,
+facts of the checkers they are made of: `t.number` gives *type + NaN rejected*,
 `t.numberConstrained(1, 100)` gives *type + bounds + NaN rejected* (it compares
 with `>=`/`<=` in a must-be-true form), `t.integer` rejects NaN,
 `t.literal(...)`/`t.keyOf(...)`/`t.valueOf(...)` allow-list, `t.instanceIsA(...)`

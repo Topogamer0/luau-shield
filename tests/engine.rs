@@ -534,6 +534,6 @@ end)
 "#;
     assert_eq!(
         run(&[("s.server.luau", code)]),
-        ["s.server.luau:21:luau-shield001"]
+        ["s.server.luau:20:luau-shield001"]
     );
 }

@@ -1,0 +1,576 @@
+---
+source: tests/snapshots.rs
+expression: "report::text::render(&report, false, false)"
+---
+critical[luau-shield004]: Client-controlled value reaches loadstring/require
+  --> examples/vulnerable-game/src/server/AdminConsole.server.luau:23:21
+   |
+22 |     end
+23 |     local chunk, err = loadstring(source)
+   |                        ^^^^^^^^^^^^^^^^^^ `source` (client-controlled) is executed as code by `loadstring`
+   |
+   = data flow:
+       1. examples/vulnerable-game/src/server/AdminConsole.server.luau:18:87
+          `source` (parameter #3) of the `Remotes.AdminCommand.OnServerEvent` handler is sent by
+          the client (the type annotation `string` is not checked at runtime)
+       2. examples/vulnerable-game/src/server/AdminConsole.server.luau:23:21
+          `source` (client-controlled) is executed as code by `loadstring`
+   = why: This gives the client remote code execution on the server: an exploiter can run
+           arbitrary code with server privileges, require malicious assets by id, delete the game,
+           steal data or ban players. Luau type annotations are erased at runtime: they do not
+           validate anything.
+   = fix: Only an allow-list can make code execution safe. Never run code or require modules
+           chosen by the client. Dispatch commands through a server-side table of allowed functions
+           (`Commands[name]`) and validate the name against it.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield004.md
+
+critical[luau-shield004]: Client-controlled value reaches loadstring/require
+  --> examples/vulnerable-game/src/server/AdminConsole.server.luau:39:19
+   |
+38 |         if command == "plugin" then
+39 |             local plugin = require(tonumber(argument))
+   |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^ `message` (client-controlled) is passed to `require`
+   |
+   = data flow:
+       1. examples/vulnerable-game/src/server/AdminConsole.server.luau:33:34
+          `message` is the chat message typed by the player
+       2. examples/vulnerable-game/src/server/AdminConsole.server.luau:37:18
+          assigned to `argument`
+       3. examples/vulnerable-game/src/server/AdminConsole.server.luau:39:19
+          `message` (client-controlled) is passed to `require`
+   = why: This gives the client remote code execution on the server: an exploiter can run
+           arbitrary code with server privileges, require malicious assets by id, delete the game,
+           steal data or ban players.
+   = fix: Only an allow-list can make code execution safe. Never run code or require modules
+           chosen by the client. Dispatch commands through a server-side table of allowed functions
+           (`Commands[name]`) and validate the name against it.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield004.md
+
+high[luau-shield002]: Client-controlled value assigned to a sensitive Instance property
+  --> examples/vulnerable-game/src/server/CombatService.server.luau:30:9
+   |
+29 |     end
+30 |     target:TakeDamage(damage)
+   |            ^^^^^^^^^^^^^^^^^^ `damage` (client-controlled) is passed to `target:TakeDamage()`
+   |
+   = data flow:
+       1. examples/vulnerable-game/src/server/CombatService.server.luau:22:85
+          `damage` (parameter #3) of the `Remotes.SwingSword.OnServerEvent` handler is sent by the
+          client (the type annotation `number` is not checked at runtime)
+       2. examples/vulnerable-game/src/server/CombatService.server.luau:30:9
+          `damage` (client-controlled) is passed to `target:TakeDamage()`
+   = why: The server replicates these properties to everyone. Trusting the client lets exploiters
+           teleport, fly, heal themselves, kill other players, move or delete parts, or display
+           unfiltered text to other players. Luau type annotations are erased at runtime: they do
+           not validate anything.
+   = fix: Missing: a lower bound and an upper bound (or a distance check against the character).
+           Compute the value on the server (from server-side stats, the character's real position,
+           etc.). If it must come from the client, clamp it to a sensible range, check distances
+           against the character, allow-list instances, and filter text with TextService.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield002.md
+
+high[luau-shield003]: Instance sent by the client used without checking ownership or location
+  --> examples/vulnerable-game/src/server/CombatService.server.luau:30:9
+   |
+29 |     end
+30 |     target:TakeDamage(damage)
+   |            ^^^^^^^^^^^^^^^^^^ `target:TakeDamage()` is called on `target`, an Instance chosen by the client
+   |
+   = data flow:
+       1. examples/vulnerable-game/src/server/CombatService.server.luau:22:67
+          `target` (parameter #2) of the `Remotes.SwingSword.OnServerEvent` handler is sent by the
+          client (the type annotation `Humanoid` is not checked at runtime)
+       2. examples/vulnerable-game/src/server/CombatService.server.luau:30:9
+          `target:TakeDamage()` is called on `target`, an Instance chosen by the client
+   = why: A remote can be fired with any Instance the client can see: another player's tool, a
+           door on the other side of the map, a part of someone else's plot. Type checks such as
+           `IsA` only prove what kind of object it is, not that the player is allowed to touch it.
+           Luau type annotations are erased at runtime: they do not validate anything.
+   = fix: A type check such as `IsA` only proves what kind of object it is, not that the player
+           owns it or may use it. Verify ownership or location before using the Instance:
+           `inst:IsDescendantOf(player.Character)`, compare an `Owner` attribute with
+           `player.UserId`, check the distance to the character, or look it up in a server-side
+           list of allowed instances.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield003.md
+
+high[luau-shield002]: Client-controlled value assigned to a sensitive Instance property
+  --> examples/vulnerable-game/src/server/CombatService.server.luau:36:3
+   |
+35 |     if humanoid then
+36 |         humanoid.WalkSpeed = speed
+   |         ^^^^^^^^^^^^^^^^^^ `speed` (client-controlled) is assigned to `humanoid.WalkSpeed`
+   |
+   = data flow:
+       1. examples/vulnerable-game/src/server/CombatService.server.luau:33:63
+          `speed` (parameter #2) of the `Remotes.Sprint.OnServerEvent` handler is sent by the
+          client (the type annotation `number` is not checked at runtime)
+       2. examples/vulnerable-game/src/server/CombatService.server.luau:36:3
+          `speed` (client-controlled) is assigned to `humanoid.WalkSpeed`
+   = why: The server replicates these properties to everyone. Trusting the client lets exploiters
+           teleport, fly, heal themselves, kill other players, move or delete parts, or display
+           unfiltered text to other players. Luau type annotations are erased at runtime: they do
+           not validate anything.
+   = fix: Missing: a lower bound and an upper bound (or a distance check against the character).
+           Compute the value on the server (from server-side stats, the character's real position,
+           etc.). If it must come from the client, clamp it to a sensible range, check distances
+           against the character, allow-list instances, and filter text with TextService.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield002.md
+
+high[luau-shield002]: Client-controlled value assigned to a sensitive Instance property
+  --> examples/vulnerable-game/src/server/CombatService.server.luau:48:2
+   |
+47 |     lastBlink[player] = now
+48 |     root.CFrame = CFrame.new(targetPosition) * root.CFrame.Rotation
+   |     ^^^^^^^^^^^ `targetPosition` (client-controlled) is assigned to `root.CFrame`
+   |
+   = data flow:
+       1. examples/vulnerable-game/src/server/CombatService.server.luau:41:62
+          `targetPosition` (parameter #2) of the `Remotes.Blink.OnServerEvent` handler is sent by
+          the client (the type annotation `Vector3` is not checked at runtime)
+       2. examples/vulnerable-game/src/server/CombatService.server.luau:48:2
+          `targetPosition` (client-controlled) is assigned to `root.CFrame`
+   = why: The server replicates these properties to everyone. Trusting the client lets exploiters
+           teleport, fly, heal themselves, kill other players, move or delete parts, or display
+           unfiltered text to other players. Luau type annotations are erased at runtime: they do
+           not validate anything.
+   = fix: Missing: a lower bound and an upper bound (or a distance check against the character).
+           Compute the value on the server (from server-side stats, the character's real position,
+           etc.). If it must come from the client, clamp it to a sensible range, check distances
+           against the character, allow-list instances, and filter text with TextService.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield002.md
+
+low[luau-shield007]: Remote handler does expensive work without a rate limit
+  --> examples/vulnerable-game/src/server/LobbyService.server.luau:15:38
+   |
+14 | -- Launches a firework rocket above the player.
+15 | Remotes.LaunchFirework.OnServerEvent:Connect(function(player: Player, effectName: string)
+   |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Remotes.LaunchFirework.OnServerEvent` handler calls `Instance.new`, `effect:Clone()` on every request, with no rate limit
+   |
+   = why: Exploiters can fire a remote thousands of times per second. Without a limit, each call
+           spends DataStore/HTTP budgets, creates instances or yields, which is enough to lag or
+           crash the server and to exhaust request quotas for everyone.
+   = fix: Add a per-player cooldown (store `os.clock()` per player and return early when called
+           too often), a busy flag while the previous request is running, or a shared rate limiter
+           module.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield007.md
+
+low[luau-shield007]: Remote handler does expensive work without a rate limit
+  --> examples/vulnerable-game/src/server/LobbyService.server.luau:33:39
+   |
+33 | Remotes.SubmitBugReport.OnServerEvent:Connect(function(player: Player, category: string, text: string)
+   |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Remotes.SubmitBugReport.OnServerEvent` handler calls `HttpService:PostAsync()` on every request, with no rate limit
+   |
+   = why: Exploiters can fire a remote thousands of times per second. Without a limit, each call
+           spends DataStore/HTTP budgets, creates instances or yields, which is enough to lag or
+           crash the server and to exhaust request quotas for everyone.
+   = fix: Add a per-player cooldown (store `os.clock()` per player and return early when called
+           too often), a busy flag while the previous request is running, or a shared rate limiter
+           module.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield007.md
+
+low[luau-shield007]: Remote handler does expensive work without a rate limit
+  --> examples/vulnerable-game/src/server/LobbyService.server.luau:37:34
+   |
+37 | Remotes.TrackEvent.OnServerEvent:Connect(function(player: Player, eventName: string, properties: { [string]: any })
+   |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Remotes.TrackEvent.OnServerEvent` handler calls `HttpService:PostAsync()` on every request, with no rate limit
+   |
+   = why: Exploiters can fire a remote thousands of times per second. Without a limit, each call
+           spends DataStore/HTTP budgets, creates instances or yields, which is enough to lag or
+           crash the server and to exhaust request quotas for everyone.
+   = fix: Add a per-player cooldown (store `os.clock()` per player and return early when called
+           too often), a busy flag while the previous request is running, or a shared rate limiter
+           module.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield007.md
+
+high[luau-shield005]: Client-controlled URL, headers or body in an HttpService request
+  --> examples/vulnerable-game/src/server/Modules/Analytics.luau:19:14
+   |
+18 |     })
+19 |     HttpService:PostAsync(url, body, Enum.HttpContentType.ApplicationJson)
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `url` (client-controlled, from `eventName`) is used in the URL of `HttpService:PostAsync()`
+   |
+   = data flow:
+       1. examples/vulnerable-game/src/server/LobbyService.server.luau:37:67
+          `eventName` (parameter #2) of the `Remotes.TrackEvent.OnServerEvent` handler is sent by
+          the client (the type annotation `string` is not checked at runtime)
+       2. examples/vulnerable-game/src/server/LobbyService.server.luau:38:2
+          passed to `Analytics.track` as `eventName`
+       3. examples/vulnerable-game/src/server/Modules/Analytics.luau:14:8
+          assigned to `url`
+       4. examples/vulnerable-game/src/server/Modules/Analytics.luau:19:14
+          `url` (client-controlled, from `eventName`) is used in the URL of
+          `HttpService:PostAsync()`
+   = why: The client can make your server send requests to arbitrary endpoints or paths, abuse
+           your webhooks and proxies (spam, @everyone pings, Terms of Service violations that get
+           the webhook or game banned) and exhaust the HttpService request budget. Luau type
+           annotations are erased at runtime: they do not validate anything.
+   = fix: The value is not allow-listed, matched against a strict pattern, converted with tonumber
+           or encoded with HttpService:UrlEncode. Keep URLs on the server and choose them through
+           an allow-listed key. Encode client values with `HttpService:UrlEncode`, convert ids with
+           `tonumber`, limit the length of text and rate-limit the remote.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield005.md
+
+high[luau-shield005]: Client-controlled URL, headers or body in an HttpService request
+  --> examples/vulnerable-game/src/server/Modules/Analytics.luau:26:14
+   |
+25 |     local body = HttpService:JSONEncode({ content = content })
+26 |     HttpService:PostAsync(Config.BugReportWebhook, body, Enum.HttpContentType.ApplicationJson)
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `body` (client-controlled, from `category`) is sent in the body of `HttpService:PostAsync()`
+   |
+   = data flow:
+       1. examples/vulnerable-game/src/server/LobbyService.server.luau:33:72
+          `category` (parameter #2) of the `Remotes.SubmitBugReport.OnServerEvent` handler is sent
+          by the client (the type annotation `string` is not checked at runtime)
+       2. examples/vulnerable-game/src/server/LobbyService.server.luau:34:2
+          passed to `Analytics.reportBug` as `category`
+       3. examples/vulnerable-game/src/server/Modules/Analytics.luau:24:8
+          assigned to `content`
+       4. examples/vulnerable-game/src/server/Modules/Analytics.luau:25:8
+          assigned to `body`
+       5. examples/vulnerable-game/src/server/Modules/Analytics.luau:26:14
+          `body` (client-controlled, from `category`) is sent in the body of
+          `HttpService:PostAsync()`
+   = why: The client can make your server send requests to arbitrary endpoints or paths, abuse
+           your webhooks and proxies (spam, @everyone pings, Terms of Service violations that get
+           the webhook or game banned) and exhaust the HttpService request budget. Luau type
+           annotations are erased at runtime: they do not validate anything.
+   = fix: The value is not type-checked and length-limited, filtered or allow-listed. Keep URLs on
+           the server and choose them through an allow-listed key. Encode client values with
+           `HttpService:UrlEncode`, convert ids with `tonumber`, limit the length of text and
+           rate-limit the remote.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield005.md
+
+high[luau-shield001]: Client-controlled value written to currency, stats or saved data
+  --> examples/vulnerable-game/src/server/Modules/DataManager.luau:74:3
+   |
+73 |     for key, value in changes do
+74 |         profile[key] = value
+   |         ^^^^^^^^^^^ `key` (client-controlled, from `changes`) chooses which entry of `profile` is written
+   |
+   = data flow:
+       1. examples/vulnerable-game/src/server/PlayerData.server.luau:47:69
+          `changes` (parameter #2) of the `Remotes.SaveSettings.OnServerEvent` handler is sent by
+          the client (the type annotation `{ [string]: any }` is not checked at runtime)
+       2. examples/vulnerable-game/src/server/PlayerData.server.luau:48:2
+          passed to `DataManager.saveSettings` as `changes`
+       3. examples/vulnerable-game/src/server/Modules/DataManager.luau:73:6
+          assigned to `key`
+       4. examples/vulnerable-game/src/server/Modules/DataManager.luau:74:3
+          `key` (client-controlled, from `changes`) chooses which entry of `profile` is written
+   = why: Exploiters can fire any remote with any arguments. If the server adds a client-supplied
+           amount to a currency, saves a client-supplied table or lets the client pick the
+           DataStore key, an exploiter can give themselves unlimited currency, corrupt other
+           players' data or poison saves with NaN/huge values. Luau type annotations are erased at
+           runtime: they do not validate anything.
+   = fix: The key is not checked against an allow-list (or a strict pattern): the client chooses
+           which entry is written, for example `Coins` or another player's save. Let the server
+           decide amounts (look prices and rewards up in a server table by an allow-listed id). If
+           a number must come from the client, check `typeof(x) == "number"`, reject NaN (`x ~= x`)
+           and check both bounds before using it. Never use client data as a DataStore key.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md
+
+high[luau-shield001]: Client-controlled value written to currency, stats or saved data
+  --> examples/vulnerable-game/src/server/Modules/DataManager.luau:76:16
+   |
+75 |     end
+76 |     settingsStore:SetAsync(tostring(player.UserId), changes)
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `changes` (client-controlled) is written by `settingsStore:SetAsync()`
+   |
+   = data flow:
+       1. examples/vulnerable-game/src/server/PlayerData.server.luau:47:69
+          `changes` (parameter #2) of the `Remotes.SaveSettings.OnServerEvent` handler is sent by
+          the client (the type annotation `{ [string]: any }` is not checked at runtime)
+       2. examples/vulnerable-game/src/server/PlayerData.server.luau:48:2
+          passed to `DataManager.saveSettings` as `changes`
+       3. examples/vulnerable-game/src/server/Modules/DataManager.luau:76:16
+          `changes` (client-controlled) is written by `settingsStore:SetAsync()`
+   = why: Exploiters can fire any remote with any arguments. If the server adds a client-supplied
+           amount to a currency, saves a client-supplied table or lets the client pick the
+           DataStore key, an exploiter can give themselves unlimited currency, corrupt other
+           players' data or poison saves with NaN/huge values. Luau type annotations are erased at
+           runtime: they do not validate anything.
+   = fix: Missing: a type check, a lower bound, an upper bound and NaN rejection. Let the server
+           decide amounts (look prices and rewards up in a server table by an allow-listed id). If
+           a number must come from the client, check `typeof(x) == "number"`, reject NaN (`x ~= x`)
+           and check both bounds before using it. Never use client data as a DataStore key.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md
+
+high[luau-shield001]: Client-controlled value written to currency, stats or saved data
+  --> examples/vulnerable-game/src/server/Modules/Economy.luau:18:2
+   |
+17 |     end
+18 |     profile.Coins += amount
+   |     ^^^^^^^^^^^^^ `coins` (client-controlled) is added to `profile.Coins`
+   |
+   = data flow:
+       1. examples/vulnerable-game/src/server/TradeService.server.luau:11:89
+          `coins` (parameter #3) of the `Remotes.OfferTrade.OnServerEvent` handler is sent by the
+          client (the type annotation `number` is not checked at runtime)
+       2. examples/vulnerable-game/src/server/TradeService.server.luau:29:3
+          passed to `Economy.addCoins` as `amount`
+       3. examples/vulnerable-game/src/server/Modules/Economy.luau:18:2
+          `coins` (client-controlled) is added to `profile.Coins`
+   = why: Exploiters can fire any remote with any arguments. If the server adds a client-supplied
+           amount to a currency, saves a client-supplied table or lets the client pick the
+           DataStore key, an exploiter can give themselves unlimited currency, corrupt other
+           players' data or poison saves with NaN/huge values. Luau type annotations are erased at
+           runtime: they do not validate anything.
+   = fix: Missing: a lower bound and NaN rejection. Let the server decide amounts (look prices and
+           rewards up in a server table by an allow-listed id). If a number must come from the
+           client, check `typeof(x) == "number"`, reject NaN (`x ~= x`) and check both bounds
+           before using it. Never use client data as a DataStore key.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md
+
+high[luau-shield001]: Client-controlled value written to currency, stats or saved data
+  --> examples/vulnerable-game/src/server/Modules/Economy.luau:21:3
+   |
+20 |     if leaderstats then
+21 |         leaderstats.Coins.Value += amount
+   |         ^^^^^^^^^^^^^^^^^^^^^^^ `coins` (client-controlled) is added to `leaderstats.Coins.Value`
+   |
+   = data flow:
+       1. examples/vulnerable-game/src/server/TradeService.server.luau:11:89
+          `coins` (parameter #3) of the `Remotes.OfferTrade.OnServerEvent` handler is sent by the
+          client (the type annotation `number` is not checked at runtime)
+       2. examples/vulnerable-game/src/server/TradeService.server.luau:29:3
+          passed to `Economy.addCoins` as `amount`
+       3. examples/vulnerable-game/src/server/Modules/Economy.luau:21:3
+          `coins` (client-controlled) is added to `leaderstats.Coins.Value`
+   = why: Exploiters can fire any remote with any arguments. If the server adds a client-supplied
+           amount to a currency, saves a client-supplied table or lets the client pick the
+           DataStore key, an exploiter can give themselves unlimited currency, corrupt other
+           players' data or poison saves with NaN/huge values. Luau type annotations are erased at
+           runtime: they do not validate anything.
+   = fix: Missing: a lower bound and NaN rejection. Let the server decide amounts (look prices and
+           rewards up in a server table by an allow-listed id). If a number must come from the
+           client, check `typeof(x) == "number"`, reject NaN (`x ~= x`) and check both bounds
+           before using it. Never use client data as a DataStore key.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md
+
+high[luau-shield001]: Client-controlled value written to currency, stats or saved data
+  --> examples/vulnerable-game/src/server/Modules/Economy.luau:31:2
+   |
+30 |     end
+31 |     profile.Coins -= cost
+   |     ^^^^^^^^^^^^^ `price` (client-controlled) is subtracted from `profile.Coins`
+   |
+   = data flow:
+       1. examples/vulnerable-game/src/server/ShopService.server.luau:35:80
+          `price` (parameter #3) of the `Remotes.BuyItem.OnServerEvent` handler is sent by the
+          client (the type annotation `number` is not checked at runtime)
+       2. examples/vulnerable-game/src/server/ShopService.server.luau:40:9
+          passed to `Economy.trySpend` as `cost`
+       3. examples/vulnerable-game/src/server/Modules/Economy.luau:31:2
+          `price` (client-controlled) is subtracted from `profile.Coins`
+   = why: Exploiters can fire any remote with any arguments. If the server adds a client-supplied
+           amount to a currency, saves a client-supplied table or lets the client pick the
+           DataStore key, an exploiter can give themselves unlimited currency, corrupt other
+           players' data or poison saves with NaN/huge values. Luau type annotations are erased at
+           runtime: they do not validate anything.
+   = fix: Missing: a lower bound and NaN rejection. Let the server decide amounts (look prices and
+           rewards up in a server table by an allow-listed id). If a number must come from the
+           client, check `typeof(x) == "number"`, reject NaN (`x ~= x`) and check both bounds
+           before using it. Never use client data as a DataStore key.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md
+
+high[luau-shield001]: Client-controlled value written to currency, stats or saved data
+  --> examples/vulnerable-game/src/server/Modules/Economy.luau:34:3
+   |
+33 |     if leaderstats then
+34 |         leaderstats.Coins.Value -= cost
+   |         ^^^^^^^^^^^^^^^^^^^^^^^ `price` (client-controlled) is subtracted from `leaderstats.Coins.Value`
+   |
+   = data flow:
+       1. examples/vulnerable-game/src/server/ShopService.server.luau:35:80
+          `price` (parameter #3) of the `Remotes.BuyItem.OnServerEvent` handler is sent by the
+          client (the type annotation `number` is not checked at runtime)
+       2. examples/vulnerable-game/src/server/ShopService.server.luau:40:9
+          passed to `Economy.trySpend` as `cost`
+       3. examples/vulnerable-game/src/server/Modules/Economy.luau:34:3
+          `price` (client-controlled) is subtracted from `leaderstats.Coins.Value`
+   = why: Exploiters can fire any remote with any arguments. If the server adds a client-supplied
+           amount to a currency, saves a client-supplied table or lets the client pick the
+           DataStore key, an exploiter can give themselves unlimited currency, corrupt other
+           players' data or poison saves with NaN/huge values. Luau type annotations are erased at
+           runtime: they do not validate anything.
+   = fix: Missing: a lower bound and NaN rejection. Let the server decide amounts (look prices and
+           rewards up in a server table by an allow-listed id). If a number must come from the
+           client, check `typeof(x) == "number"`, reject NaN (`x ~= x`) and check both bounds
+           before using it. Never use client data as a DataStore key.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md
+
+low[luau-shield007]: Remote handler does expensive work without a rate limit
+  --> examples/vulnerable-game/src/server/PlayerData.server.luau:47:36
+   |
+47 | Remotes.SaveSettings.OnServerEvent:Connect(function(player: Player, changes: { [string]: any })
+   |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Remotes.SaveSettings.OnServerEvent` handler calls `settingsStore:SetAsync()` on every request, with no rate limit
+   |
+   = why: Exploiters can fire a remote thousands of times per second. Without a limit, each call
+           spends DataStore/HTTP budgets, creates instances or yields, which is enough to lag or
+           crash the server and to exhaust request quotas for everyone.
+   = fix: Add a per-player cooldown (store `os.clock()` per player and return early when called
+           too often), a busy flag while the previous request is running, or a shared rate limiter
+           module.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield007.md
+
+low[luau-shield007]: Remote handler does expensive work without a rate limit
+  --> examples/vulnerable-game/src/server/PlotService.server.luau:43:35
+   |
+42 | -- CFrame of the preview when the player confirms.
+43 | Remotes.PlaceObject.OnServerEvent:Connect(function(player: Player, itemId: string, cframe: CFrame)
+   |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Remotes.PlaceObject.OnServerEvent` handler calls `template:Clone()` on every request, with no rate limit
+   |
+   = why: Exploiters can fire a remote thousands of times per second. Without a limit, each call
+           spends DataStore/HTTP budgets, creates instances or yields, which is enough to lag or
+           crash the server and to exhaust request quotas for everyone.
+   = fix: Add a per-player cooldown (store `os.clock()` per player and return early when called
+           too often), a busy flag while the previous request is running, or a shared rate limiter
+           module.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield007.md
+
+high[luau-shield002]: Client-controlled value assigned to a sensitive Instance property
+  --> examples/vulnerable-game/src/server/PlotService.server.luau:57:9
+   |
+56 |     local object = template:Clone()
+57 |     object:PivotTo(cframe)
+   |            ^^^^^^^^^^^^^^^ `cframe` (client-controlled) is passed to `object:PivotTo()`
+   |
+   = data flow:
+       1. examples/vulnerable-game/src/server/PlotService.server.luau:43:84
+          `cframe` (parameter #3) of the `Remotes.PlaceObject.OnServerEvent` handler is sent by
+          the client (the type annotation `CFrame` is not checked at runtime)
+       2. examples/vulnerable-game/src/server/PlotService.server.luau:57:9
+          `cframe` (client-controlled) is passed to `object:PivotTo()`
+   = why: The server replicates these properties to everyone. Trusting the client lets exploiters
+           teleport, fly, heal themselves, kill other players, move or delete parts, or display
+           unfiltered text to other players. Luau type annotations are erased at runtime: they do
+           not validate anything.
+   = fix: Missing: a lower bound and an upper bound (or a distance check against the character).
+           Compute the value on the server (from server-side stats, the character's real position,
+           etc.). If it must come from the client, clamp it to a sensible range, check distances
+           against the character, allow-list instances, and filter text with TextService.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield002.md
+
+high[luau-shield003]: Instance sent by the client used without checking ownership or location
+  --> examples/vulnerable-game/src/server/PlotService.server.luau:69:9
+   |
+68 |     end
+69 |     object:Destroy()
+   |            ^^^^^^^^^ `object:Destroy()` is called on `object`, an Instance chosen by the client
+   |
+   = data flow:
+       1. examples/vulnerable-game/src/server/PlotService.server.luau:64:69
+          `object` (parameter #2) of the `Remotes.DeleteObject.OnServerEvent` handler is sent by
+          the client (the type annotation `Model` is not checked at runtime)
+       2. examples/vulnerable-game/src/server/PlotService.server.luau:69:9
+          `object:Destroy()` is called on `object`, an Instance chosen by the client
+   = why: A remote can be fired with any Instance the client can see: another player's tool, a
+           door on the other side of the map, a part of someone else's plot. Type checks such as
+           `IsA` only prove what kind of object it is, not that the player is allowed to touch it.
+           Luau type annotations are erased at runtime: they do not validate anything.
+   = fix: A type check such as `IsA` only proves what kind of object it is, not that the player
+           owns it or may use it. Verify ownership or location before using the Instance:
+           `inst:IsDescendantOf(player.Character)`, compare an `Owner` attribute with
+           `player.UserId`, check the distance to the character, or look it up in a server-side
+           list of allowed instances.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield003.md
+
+low[luau-shield007]: Remote handler does expensive work without a rate limit
+  --> examples/vulnerable-game/src/server/ShopService.server.luau:35:31
+   |
+34 | -- the player clicked; this saves a catalog lookup on the server.
+35 | Remotes.BuyItem.OnServerEvent:Connect(function(player: Player, itemId: string, price: number)
+   |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Remotes.BuyItem.OnServerEvent` handler calls `template:Clone()` on every request, with no rate limit
+   |
+   = why: Exploiters can fire a remote thousands of times per second. Without a limit, each call
+           spends DataStore/HTTP budgets, creates instances or yields, which is enough to lag or
+           crash the server and to exhaust request quotas for everyone.
+   = fix: Add a per-player cooldown (store `os.clock()` per player and return early when called
+           too often), a busy flag while the previous request is running, or a shared rate limiter
+           module.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield007.md
+
+high[luau-shield001]: Client-controlled value written to currency, stats or saved data
+  --> examples/vulnerable-game/src/server/ShopService.server.luau:43:2
+   |
+42 |     end
+43 |     profile.Inventory[itemId] = true
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^ `itemId` (client-controlled) chooses which entry of `profile.Inventory` is written
+   |
+   = data flow:
+       1. examples/vulnerable-game/src/server/ShopService.server.luau:35:64
+          `itemId` (parameter #2) of the `Remotes.BuyItem.OnServerEvent` handler is sent by the
+          client (the type annotation `string` is not checked at runtime)
+       2. examples/vulnerable-game/src/server/ShopService.server.luau:43:2
+          `itemId` (client-controlled) chooses which entry of `profile.Inventory` is written
+   = why: Exploiters can fire any remote with any arguments. If the server adds a client-supplied
+           amount to a currency, saves a client-supplied table or lets the client pick the
+           DataStore key, an exploiter can give themselves unlimited currency, corrupt other
+           players' data or poison saves with NaN/huge values. Luau type annotations are erased at
+           runtime: they do not validate anything.
+   = fix: The key is not checked against an allow-list (or a strict pattern): the client chooses
+           which entry is written, for example `Coins` or another player's save. Let the server
+           decide amounts (look prices and rewards up in a server table by an allow-listed id). If
+           a number must come from the client, check `typeof(x) == "number"`, reject NaN (`x ~= x`)
+           and check both bounds before using it. Never use client data as a DataStore key.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield001.md
+
+medium[luau-shield006]: Server waits for a client with RemoteFunction:InvokeClient
+  --> examples/vulnerable-game/src/server/TradeService.server.luau:22:40
+   |
+21 |     busy[target] = true
+22 |     local accepted = Remotes.ConfirmTrade:InvokeClient(target, player.Name, coins)
+   |                                           ^^^^^^^^^^^^ `Remotes.ConfirmTrade:InvokeClient()` makes the server wait for an answer from a client, which may never come
+   |
+   = why: A malicious client can simply never return: the server thread yields forever (pcall does
+           not help), leaking memory and blocking whatever logic waits for the answer. A client
+           that errors or leaves also breaks the call, and every value it returns is
+           client-controlled.
+   = fix: Use a RemoteEvent for the request and another for the reply (with a server-side
+           timeout), or at least run the invoke in a detached thread (`task.spawn`) with a timeout
+           and validate the returned values.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield006.md
+
+critical[luau-shield008]: Secret hard-coded in code that replicates to clients
+  --> examples/vulnerable-game/src/shared/Config.luau:44:26
+   |
+43 | Config.AnalyticsUrl = "https://analytics.tycoonshop.example/v1"
+44 | Config.AnalyticsApiKey = "tsk_live_4f9a2c7e1b8d3f6a0c5e9b2d7a4f1c8e"
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ credential `tsk_live_4f9…` is hard-coded in a ModuleScript replicated to clients: every player can read it
+   |
+   = why: Exploiters can decompile every LocalScript and replicated ModuleScript. A leaked webhook
+           can be spammed or deleted, and a leaked API key gives full access to the account or
+           service behind it.
+   = fix: Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox
+           secrets (`HttpService:GetSecret`) and revoke the leaked credential.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield008.md
+
+critical[luau-shield008]: Secret hard-coded in code that replicates to clients
+  --> examples/vulnerable-game/src/shared/Config.luau:45:27
+   |
+44 | Config.AnalyticsApiKey = "tsk_live_4f9a2c7e1b8d3f6a0c5e9b2d7a4f1c8e"
+45 | Config.BugReportWebhook = "https://discord.com/api/webhooks/1187362049571234816/qT7vXz2LmN9pRk4sYw8aBcDe5fGh1jK0lMnOpQrStUvWxYz3AbCdEfGhIjKlMnOp6Q"
+   |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Discord webhook URL `https://disc…` is hard-coded in a ModuleScript replicated to clients: every player can read it
+   |
+   = why: Exploiters can decompile every LocalScript and replicated ModuleScript. A leaked webhook
+           can be spammed or deleted, and a leaked API key gives full access to the account or
+           service behind it.
+   = fix: Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox
+           secrets (`HttpService:GetSecret`) and revoke the leaked credential.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield008.md
+
+critical[luau-shield008]: Secret hard-coded in code that replicates to clients
+  --> examples/vulnerable-game/src/shared/Config.luau:46:24
+   |
+45 | Config.BugReportWebhook = "https://discord.com/api/webhooks/1187362049571234816/qT7vXz2LmN9pRk4sYw8aBcDe5fGh1jK0lMnOpQrStUvWxYz3AbCdEfGhIjKlMnOp6Q"
+46 | Config.AdminPassword = "Tyc00n-Adm1n-2024!"
+   |                        ^^^^^^^^^^^^^^^^^^^^ credential `Tyc00n-Adm1n…` is hard-coded in a ModuleScript replicated to clients: every player can read it
+   |
+   = why: Exploiters can decompile every LocalScript and replicated ModuleScript. A leaked webhook
+           can be spammed or deleted, and a leaked API key gives full access to the account or
+           service behind it.
+   = fix: Move the secret to the server (ServerScriptService/ServerStorage), store it with Roblox
+           secrets (`HttpService:GetSecret`) and revoke the leaked credential.
+   = docs: https://github.com/Topogamer0/luau-shield/blob/main/docs/rules/luau-shield008.md
+
+Found 27 problems (5 critical, 15 high, 1 medium, 6 low) in 15 files.

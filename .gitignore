@@ -1,0 +1,4 @@
+/target
+*.sarif
+*.snap.new
+.DS_Store

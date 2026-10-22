@@ -1,0 +1,4 @@
+# Keep LF line endings everywhere so that snapshots and fixtures are identical
+# on Windows, macOS and Linux.
+* text=auto eol=lf
+*.zip binary

@@ -1,0 +1,7 @@
+{
+  "name": "fixture",
+  "tree": {
+    "$className": "DataModel",
+    "StarterGui": { "$path": "src/gui" }
+  }
+}

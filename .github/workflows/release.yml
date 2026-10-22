@@ -1,0 +1,224 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare the tag with the crate version
+        id: version
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::Tag '$TAG' is not a release tag (expected vMAJOR.MINOR.PATCH)."
+            exit 1
+          fi
+          crate_version="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '[.packages[] | select(any(.targets[]; .name == "luau-shield" and (.kind | index("bin"))))][0].version // empty')"
+          if [ "$crate_version" != "$version" ]; then
+            echo "::error::Tag $TAG does not match the version of the luau-shield binary crate (${crate_version:-not found}). Update Cargo.toml first."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            os: windows
+            arch: x86_64
+            # Link the C runtime statically: no VC++ redistributable needed.
+            rustflags: -C target-feature=+crt-static
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            os: macos
+            arch: aarch64
+          - target: x86_64-apple-darwin
+            # Cross-compiled on the Apple Silicon runner.
+            runner: macos-latest
+            os: macos
+            arch: x86_64
+          - target: x86_64-unknown-linux-musl
+            # musl binaries are fully static: they run on any Linux distribution.
+            runner: ubuntu-latest
+            os: linux
+            arch: x86_64
+    # No build cache here on purpose: release binaries are always built from scratch.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Add the Rust target
+        shell: bash
+        run: rustup target add "${{ matrix.target }}"
+
+      - name: Install musl tools
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+
+      - name: Build
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          TARGET_RUSTFLAGS: ${{ matrix.rustflags }}
+        run: |
+          set -euo pipefail
+          if [ -n "$TARGET_RUSTFLAGS" ]; then export RUSTFLAGS="$TARGET_RUSTFLAGS"; fi
+          cargo build --release --locked --target "$TARGET"
+
+      - name: Check the binary
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          ASSET_OS: ${{ matrix.os }}
+          ASSET_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          case "$ASSET_OS" in
+            windows)
+              bin="target/$TARGET/release/luau-shield.exe"
+              # The import table names every DLL the program needs.
+              if grep -aEqi 'vcruntime140[_0-9]*\.dll|api-ms-win-crt-' "$bin"; then
+                echo "::error::$bin depends on the Visual C++ runtime (crt-static was not applied)."
+                exit 1
+              fi
+              ;;
+            macos)
+              bin="target/$TARGET/release/luau-shield"
+              file "$bin"
+              expected="$ASSET_ARCH"
+              if [ "$expected" = aarch64 ]; then expected=arm64; fi
+              if [ "$(lipo -archs "$bin")" != "$expected" ]; then
+                echo "::error::$bin is not a $expected binary."
+                exit 1
+              fi
+              ;;
+            linux)
+              bin="target/$TARGET/release/luau-shield"
+              file "$bin"
+              if ! { file "$bin" | grep -Eq 'static(ally|-pie) linked' \
+                     || ldd "$bin" 2>&1 | grep -Eq 'not a dynamic executable|statically linked'; }; then
+                echo "::error::$bin is not statically linked."
+                exit 1
+              fi
+              ;;
+          esac
+          # Smoke test (the x86_64 macOS binary cannot run on the arm64 runner).
+          if [ "$ASSET_OS" != macos ] || [ "$ASSET_ARCH" = aarch64 ]; then
+            "$bin" rules
+          fi
+
+      - name: Package
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          ASSET_OS: ${{ matrix.os }}
+          ASSET_ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Rokit, Aftman and Foreman choose the asset from the OS and
+          # architecture in its name; the executable sits at the ZIP root.
+          name="luau-shield-${VERSION}-${ASSET_OS}-${ASSET_ARCH}"
+          exe="luau-shield"
+          if [ "$ASSET_OS" = windows ]; then exe="luau-shield.exe"; fi
+
+          mkdir -p staging dist
+          cp "target/$TARGET/release/$exe" "staging/$exe"
+          if [ "$ASSET_OS" = windows ]; then
+            (cd staging && 7z a -tzip -mx=9 "../dist/$name.zip" "$exe")
+          else
+            (cd staging && zip -9 "../dist/$name.zip" "$exe")
+          fi
+
+          cd dist
+          if command -v sha256sum > /dev/null 2>&1; then
+            hash="$(sha256sum "$name.zip" | awk '{ print $1 }')"
+          else
+            hash="$(shasum -a 256 "$name.zip" | awk '{ print $1 }')"
+          fi
+          printf '%s  %s\n' "$hash" "$name.zip" > "$name.zip.sha256"
+          cat "$name.zip.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: luau-shield-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish the GitHub release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: luau-shield-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify the checksums
+        working-directory: dist
+        run: |
+          ls -l
+          set -- ./*.zip
+          if [ "$#" -ne 4 ]; then
+            echo "::error::Expected 4 archives, found $#."
+            exit 1
+          fi
+          sha256sum -c -- *.sha256
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists: replacing its assets."
+          else
+            prerelease=""
+            case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
+            # Created as a draft so nobody can install a release without assets.
+            gh release create "$TAG" --draft --verify-tag --generate-notes \
+              --title "luau-shield $VERSION" $prerelease
+          fi
+          # Archives first, checksums second: Foreman installs the first asset
+          # whose name matches the platform, so the .zip must come first.
+          gh release upload "$TAG" dist/*.zip --clobber
+          gh release upload "$TAG" dist/*.sha256 --clobber
+          gh release edit "$TAG" --draft=false

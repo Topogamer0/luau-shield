@@ -1,0 +1,5 @@
+---
+source: tests/snapshots.rs
+expression: "report::text::render(&report, false, false)"
+---
+✓ No problems found in 16 files.

@@ -1,6 +1,6 @@
 //! Abstract program state (variables and refinements) and activation frames.
 
-use super::value::{Checks, Closure, Scope, Target, Value, VarId};
+use super::value::{Checks, Closure, Scope, Target, Value, VarId, check};
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
@@ -12,6 +12,60 @@ pub struct State<'a> {
     pub path_facts: HashMap<(VarId, Rc<str>), Checks>,
     /// No normal execution reaches this point (after return/error/break).
     pub dead: bool,
+    /// luau-shield007: what the conditions on this path proved about state
+    /// expressions (`state[player] == "Playing"`, `busy[player]` is falsy),
+    /// keyed by the expression text.
+    pub expects: BTreeMap<Rc<str>, Expect>,
+    /// luau-shield007: state expressions tested on this path and then changed
+    /// so that the same test fails next time (`if state[player] ~=
+    /// "Playing" then return end; state[player] = "Menu"`): the request
+    /// cannot repeat the work that follows. The value is `true` when the
+    /// state is per player, `false` for a global flag.
+    pub consumed: BTreeMap<Rc<str>, (bool, Expect)>,
+    /// Consumed states the handler yielded or waited with (other requests
+    /// could see them closed).
+    pub waited: std::collections::BTreeSet<Rc<str>>,
+    /// Consumed states this path kept closed during a real wait
+    /// (`task.wait(t)`, `task.delay(t, ...)`).
+    pub paused: std::collections::BTreeSet<Rc<str>>,
+    /// A permission guard on the sender succeeded on this path (its text).
+    pub admin: Option<Rc<str>>,
+}
+
+/// A literal a state expression is compared with.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Lit {
+    Nil,
+    Bool(bool),
+    /// Numbers are kept as text so that facts stay comparable.
+    Num(Rc<str>),
+    Str(Rc<str>),
+}
+
+/// What a condition proved about a state expression on one path.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Expect {
+    Truthy,
+    Falsy,
+    Eq(Lit),
+    Ne(Lit),
+}
+
+impl Expect {
+    /// Does writing `value` (a literal, or `None` when unknown) make the
+    /// condition that proved `self` fail from now on?
+    pub fn violated_by(&self, value: Option<&Lit>, truthy: Option<bool>) -> bool {
+        match self {
+            Expect::Truthy => truthy == Some(false),
+            Expect::Falsy => truthy == Some(true),
+            Expect::Eq(lit) => match value {
+                Some(v) => v != lit,
+                // Any truthy value differs from nil/false.
+                None => matches!(lit, Lit::Nil | Lit::Bool(false)) && truthy == Some(true),
+            },
+            Expect::Ne(lit) => value == Some(lit),
+        }
+    }
 }
 
 impl<'a> State<'a> {
@@ -35,7 +89,9 @@ impl<'a> State<'a> {
         for (id, value) in vars.iter_mut() {
             // Variables declared on one path only (block-local) are kept.
             if let Some(theirs) = other_vars.remove(id) {
-                *value = value.join(&theirs);
+                if !value.absorbs(&theirs) {
+                    *value = value.join(&theirs);
+                }
             }
         }
         vars.extend(other_vars);
@@ -48,10 +104,46 @@ impl<'a> State<'a> {
                 }
             }
         }
+        let expects = self
+            .expects
+            .into_iter()
+            .filter(|(k, e)| other.expects.get(k) == Some(e))
+            .collect();
+        let consumed = self
+            .consumed
+            .into_iter()
+            .filter_map(|(k, (a, e))| {
+                other
+                    .consumed
+                    .get(&k)
+                    .filter(|(_, f)| *f == e)
+                    .map(|(b, _)| (k, (a && *b, e)))
+            })
+            .collect();
+        let waited = self
+            .waited
+            .into_iter()
+            .filter(|k| other.waited.contains(k))
+            .collect();
+        let paused = self
+            .paused
+            .into_iter()
+            .filter(|k| other.paused.contains(k))
+            .collect();
+        let admin = if self.admin == other.admin {
+            self.admin
+        } else {
+            None
+        };
         State {
             vars,
             path_facts,
             dead: false,
+            expects,
+            consumed,
+            waited,
+            paused,
+            admin,
         }
     }
 
@@ -69,7 +161,11 @@ impl<'a> State<'a> {
         match target {
             Target::Var(id) => {
                 if let Some(value) = self.vars.get_mut(id) {
-                    value.add_checks(checks);
+                    if checks & check::PRIVILEGED != 0 {
+                        value.add_checks_deep(checks);
+                    } else {
+                        value.add_checks(checks);
+                    }
                 }
             }
             Target::Path(id, path) => {
@@ -92,6 +188,10 @@ impl<'a> State<'a> {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Facts {
     pub map: BTreeMap<Target, Checks>,
+    /// luau-shield007: what holds about state expressions (see `State::expects`).
+    pub expects: BTreeMap<Rc<str>, Expect>,
+    /// A permission guard on the sender succeeded (see `State::admin`).
+    pub guard: Option<Rc<str>>,
 }
 
 impl Facts {
@@ -112,6 +212,12 @@ impl Facts {
         for (target, checks) in &other.map {
             self.add(target.clone(), *checks);
         }
+        for (text, expect) in &other.expects {
+            self.expects.insert(text.clone(), expect.clone());
+        }
+        if self.guard.is_none() {
+            self.guard = other.guard.clone();
+        }
         self
     }
 
@@ -123,7 +229,34 @@ impl Facts {
                 out.add(target.clone(), checks & theirs);
             }
         }
+        for (text, expect) in &self.expects {
+            if other.expects.get(text) == Some(expect) {
+                out.expects.insert(text.clone(), expect.clone());
+            }
+        }
+        // `isAdmin(p) or isModerator(p)`: either guard passed.
+        out.guard = match (&self.guard, &other.guard) {
+            (Some(a), Some(b)) if a == b => Some(a.clone()),
+            (Some(a), Some(b)) => Some(Rc::from(format!("{a}` or `{b}").as_str())),
+            _ => None,
+        };
         out
+    }
+
+    /// The same facts without what a permission guard proved.
+    pub fn without_guard(mut self) -> Facts {
+        self.guard = None;
+        for checks in self.map.values_mut() {
+            *checks &= !check::PRIVILEGED;
+        }
+        self.map.retain(|_, checks| *checks != 0);
+        self
+    }
+
+    pub fn expect(text: impl Into<Rc<str>>, expect: Expect) -> Facts {
+        let mut facts = Facts::default();
+        facts.expects.insert(text.into(), expect);
+        facts
     }
 }
 
@@ -165,6 +298,20 @@ pub struct Summary {
     pub exit: Vec<Checks>,
 }
 
+/// What a function returns, in terms of its parameters: the return values
+/// computed with one "probe" source per parameter.
+pub struct ReturnSummary<'a> {
+    /// The probe source of each argument position (`None` for `self`).
+    pub probes: Vec<Option<u32>>,
+    pub returns: Vec<Value<'a>>,
+    /// Variables of the call captured by the closures it returns.
+    pub captured: Vec<(VarId, Value<'a>)>,
+    /// The function yields (`task.wait`, an `*Async` call).
+    pub yields: bool,
+    /// `Analyzer::client_epoch` when it was made.
+    pub epoch: u64,
+}
+
 /// One function activation.
 pub struct Frame<'a> {
     pub id: u32,
@@ -181,6 +328,8 @@ pub struct Frame<'a> {
     pub summary: Option<SummaryCollector>,
     /// Name of the function, for messages.
     pub name: Rc<str>,
+    /// The entry point's own frame (its `...` are the request's arguments).
+    pub entry: bool,
 }
 
 impl<'a> Frame<'a> {

@@ -40,8 +40,20 @@ pub mod check {
         TYPE_NUMBER | TYPE_STRING | TYPE_BOOLEAN | TYPE_INSTANCE | TYPE_TABLE | TYPE_OTHER;
     pub const BOUNDS: Checks = LOWER | UPPER;
     pub const ALL: Checks = (1 << 16) - 1;
+    /// Not a check of the value: the code only runs for players who passed a
+    /// permission guard (`if not Admins.isAdmin(player) then return end`).
+    /// Findings on such values are downgraded to `info`.
+    pub const PRIVILEGED: Checks = 1 << 16;
+    /// Not a check either: while summarising a function, its bounds or
+    /// allow-list came from another parameter (`math.clamp(v, 1, max)`).
+    /// They prove nothing at a call where that argument is client data.
+    pub const RELATIVE: Checks = 1 << 17;
+    /// Facts that can be relative to another value (see `RELATIVE`).
+    pub const RELATIVE_FACTS: Checks = BOUNDS | ALLOWLIST | OWNERSHIP | LENGTH;
     /// Facts that survive reading a field of a checked value.
-    pub const INHERITED_BY_FIELDS: Checks = VALIDATED | OWNERSHIP | ALLOWLIST;
+    pub const INHERITED_BY_FIELDS: Checks = VALIDATED | OWNERSHIP | ALLOWLIST | PRIVILEGED;
+    /// Facts that survive any transformation of the value.
+    pub const KEPT: Checks = VALIDATED | ALLOWLIST | PRIVILEGED;
     /// Facts that make every rule happy.
     pub const TRUSTED: Checks = VALIDATED | ALLOWLIST;
 }
@@ -156,6 +168,24 @@ pub struct Flow {
     /// The value was read from an Instance chosen by the client (server data,
     /// but the client decides which object it comes from).
     pub instance_data: bool,
+    /// The last function named like a sanitizer (`Look.sanitize`) that
+    /// returned this value: findings suggest declaring it in the configuration.
+    pub via: Option<Rc<Via>>,
+    /// The permission guard (`Admins.isAdmin(player)`) that made this flow
+    /// `PRIVILEGED`, named in downgraded findings.
+    pub guard: Option<Rc<str>>,
+}
+
+/// A sanitizer-like function a value went through.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Via {
+    /// How the function was called (`Look.sanitize`).
+    pub name: Rc<str>,
+    /// luau-shield analysed its body (otherwise it could not be resolved or
+    /// was too deep to follow).
+    pub analysed: bool,
+    /// The checks its results had when it returned.
+    pub made: Checks,
 }
 
 impl Flow {
@@ -166,6 +196,8 @@ impl Flow {
             checks: 0,
             raw: true,
             instance_data: false,
+            via: None,
+            guard: None,
         }
     }
 
@@ -221,6 +253,10 @@ impl Flow {
 }
 
 pub const MAX_FLOWS: usize = 8;
+
+/// Functions a value can hold (a handler table connected in a loop holds
+/// all of its handlers).
+pub const MAX_FUNCS: usize = 64;
 
 /// A function value.
 #[derive(Clone, Debug)]
@@ -299,6 +335,8 @@ pub enum Builtin {
     Print,
     /// `task.spawn` / `task.defer` / `task.delay` / `coroutine.wrap` / `spawn` / `delay`...
     Spawn,
+    /// `coroutine.yield()`.
+    Yield,
     Wait,
     TableInsert,
     TableFind,
@@ -430,6 +468,9 @@ pub struct Value<'a> {
     /// (`local owner = car:FindFirstChild("Owner")`): verifying the value's
     /// ownership also verifies the Instance.
     pub origin: Option<Target>,
+    /// luau-shield007: the state expression this local was read from
+    /// (`local current = state[player]`), as a state key.
+    pub alias: Option<Rc<str>>,
 }
 
 impl<'a> Value<'a> {
@@ -557,6 +598,167 @@ impl<'a> Value<'a> {
         }
     }
 
+    /// Renames the sanitizer-like function recorded as `from` to the way it
+    /// was called (`Look.sanitize` declared, `L.sanitize` called).
+    pub fn rename_via_deep(&mut self, from: &str, to: &str) {
+        self.rename_via_at(from, to, 0);
+    }
+
+    fn rename_via_at(&mut self, from: &str, to: &str, depth: usize) {
+        for flow in &mut self.flows {
+            if let Some(via) = &flow.via {
+                if &*via.name == from {
+                    flow.via = Some(Rc::new(Via {
+                        name: Rc::from(to),
+                        analysed: via.analysed,
+                        made: via.made,
+                    }));
+                }
+            }
+        }
+        let renamed = |v: &Value<'a>| {
+            v.flows
+                .iter()
+                .any(|f| f.via.as_ref().is_some_and(|via| &*via.name == from))
+        };
+        if depth > 6 || !self.any_stored(&renamed) {
+            return;
+        }
+        if let Kind::Table(table) = &self.kind {
+            let mut table = (**table).clone();
+            for value in table.fields.values_mut() {
+                value.rename_via_at(from, to, depth + 1);
+            }
+            if let Some(dynamic) = table.dynamic.as_mut() {
+                dynamic.rename_via_at(from, to, depth + 1);
+            }
+            self.kind = Kind::Table(Rc::new(table));
+        }
+    }
+
+    /// Does `pred` hold for a value stored in this table, at any depth up to
+    /// `depth_limit`? (Large server tables are shared, not copied, when no
+    /// value in them needs a change.)
+    pub fn any_stored(&self, pred: &impl Fn(&Value<'a>) -> bool) -> bool {
+        self.any_stored_at(pred, 0)
+    }
+
+    fn any_stored_at(&self, pred: &impl Fn(&Value<'a>) -> bool, depth: usize) -> bool {
+        if depth > 6 {
+            return false;
+        }
+        match &self.kind {
+            Kind::Table(table) => table
+                .fields
+                .values()
+                .chain(table.dynamic.as_deref())
+                .any(|v| pred(v) || v.any_stored_at(pred, depth + 1)),
+            _ => false,
+        }
+    }
+
+    /// Forgets `defined_by` here and in every stored value.
+    pub fn clear_defined_by_deep(&mut self) {
+        self.clear_defined_by_at(0);
+    }
+
+    fn clear_defined_by_at(&mut self, depth: usize) {
+        self.defined_by = None;
+        if depth > 6 {
+            return;
+        }
+        if let Kind::Table(table) = &self.kind {
+            let needs = table
+                .fields
+                .values()
+                .chain(table.dynamic.as_deref())
+                .any(|v| v.defined_by.is_some() || v.any_stored(&|x| x.defined_by.is_some()));
+            if needs {
+                let mut table = (**table).clone();
+                for value in table.fields.values_mut() {
+                    value.clear_defined_by_at(depth + 1);
+                }
+                if let Some(dynamic) = table.dynamic.as_mut() {
+                    dynamic.clear_defined_by_at(depth + 1);
+                }
+                self.kind = Kind::Table(Rc::new(table));
+            }
+        }
+    }
+
+    /// Records that the value (and everything stored in it) was returned by
+    /// the sanitizer-like function `via`.
+    pub fn set_via_deep(&mut self, via: &Rc<Via>) {
+        self.set_via_at(via, 0);
+    }
+
+    fn set_via_at(&mut self, via: &Rc<Via>, depth: usize) {
+        for flow in &mut self.flows {
+            flow.via = Some(via.clone());
+        }
+        if depth > 6 || !self.any_stored(&|v| !v.flows.is_empty()) {
+            return;
+        }
+        if let Kind::Table(table) = &self.kind {
+            let mut table = (**table).clone();
+            for value in table.fields.values_mut() {
+                value.set_via_at(via, depth + 1);
+            }
+            if let Some(dynamic) = table.dynamic.as_mut() {
+                dynamic.set_via_at(via, depth + 1);
+            }
+            self.kind = Kind::Table(Rc::new(table));
+        }
+    }
+
+    /// Marks the value, and everything stored in it, as only reachable after
+    /// the permission guard `guard` succeeded.
+    pub fn privilege_deep(&mut self, guard: &Rc<str>) {
+        self.privilege_at(guard, 0);
+    }
+
+    fn privilege_at(&mut self, guard: &Rc<str>, depth: usize) {
+        for flow in &mut self.flows {
+            flow.checks |= check::PRIVILEGED;
+            flow.guard = Some(guard.clone());
+        }
+        if depth > 6 || !self.any_stored(&|v| !v.flows.is_empty()) {
+            return;
+        }
+        if let Kind::Table(table) = &self.kind {
+            let mut table = (**table).clone();
+            for value in table.fields.values_mut() {
+                value.privilege_at(guard, depth + 1);
+            }
+            if let Some(dynamic) = table.dynamic.as_mut() {
+                dynamic.privilege_at(guard, depth + 1);
+            }
+            self.kind = Kind::Table(Rc::new(table));
+        }
+    }
+
+    /// Adds `checks` to the value and to everything stored in it.
+    pub fn add_checks_deep(&mut self, checks: Checks) {
+        self.add_checks_at(checks, 0);
+    }
+
+    fn add_checks_at(&mut self, checks: Checks, depth: usize) {
+        self.add_checks(checks);
+        if depth > 6 || !self.any_stored(&|v| !v.flows.is_empty()) {
+            return;
+        }
+        if let Kind::Table(table) = &self.kind {
+            let mut table = (**table).clone();
+            for value in table.fields.values_mut() {
+                value.add_checks_at(checks, depth + 1);
+            }
+            if let Some(dynamic) = table.dynamic.as_mut() {
+                dynamic.add_checks_at(checks, depth + 1);
+            }
+            self.kind = Kind::Table(Rc::new(table));
+        }
+    }
+
     pub fn truthy_const(&self) -> Option<bool> {
         match &self.kind {
             Kind::Nil => Some(false),
@@ -568,7 +770,42 @@ impl<'a> Value<'a> {
     }
 
     /// Least upper bound of two values (used where control flow merges).
+    /// Joining `other` into this value changes nothing (a cheap test that
+    /// spares copying large tables where control flow merges).
+    pub fn absorbs(&self, other: &Value<'a>) -> bool {
+        let kind = match (&self.kind, &other.kind) {
+            (Kind::Unknown, Kind::Unknown) | (Kind::Nil, Kind::Nil) => true,
+            (Kind::Bool(x), Kind::Bool(y)) => x == y,
+            (Kind::Number(x), Kind::Number(y)) => x == y,
+            (Kind::Str(x), Kind::Str(y)) => x == y,
+            (Kind::Table(x), Kind::Table(y)) => Rc::ptr_eq(x, y),
+            (Kind::Func(x), Kind::Func(y)) => Rc::ptr_eq(x, y),
+            (Kind::Obj(x), Kind::Obj(y)) => {
+                Rc::ptr_eq(x, y) || (x.class == y.class && x.instance == y.instance)
+            }
+            (Kind::Validator(x), Kind::Validator(y)) => Rc::ptr_eq(x, y),
+            _ => false,
+        };
+        kind && self.player_rel == other.player_rel
+            && other
+                .flows
+                .iter()
+                .all(|f| self.flows.iter().any(|g| g.same(f)))
+            && self.path == other.path
+            && self.witness == other.witness
+            && match (self.defined_by, other.defined_by) {
+                (Some(a), Some(b)) => std::ptr::eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+            && self.origin == other.origin
+            && self.alias == other.alias
+    }
+
     pub fn join(&self, other: &Value<'a>) -> Value<'a> {
+        if self.absorbs(other) {
+            return self.clone();
+        }
         let kind = join_kind(&self.kind, &other.kind);
         let mut flows = self.flows.clone();
         for flow in &other.flows {
@@ -594,6 +831,11 @@ impl<'a> Value<'a> {
             },
             origin: if self.origin == other.origin {
                 self.origin.clone()
+            } else {
+                None
+            },
+            alias: if self.alias == other.alias {
+                self.alias.clone()
             } else {
                 None
             },
@@ -643,6 +885,21 @@ fn join_kind<'a>(a: &Kind<'a>, b: &Kind<'a>) -> Kind<'a> {
             if Rc::ptr_eq(x, y) {
                 return Kind::Table(x.clone());
             }
+            // Equal contents: keep the same table (later joins are cheap).
+            let same_dynamic = match (&x.dynamic, &y.dynamic) {
+                (Some(a), Some(b)) => a.absorbs(b),
+                (None, None) => true,
+                _ => false,
+            };
+            if same_dynamic
+                && x.fresh_frame == y.fresh_frame
+                && x.fields.len() == y.fields.len()
+                && y.fields
+                    .iter()
+                    .all(|(k, v)| x.fields.get(k).is_some_and(|mine| mine.absorbs(v)))
+            {
+                return Kind::Table(x.clone());
+            }
             let mut fields = x.fields.clone();
             for (k, v) in &y.fields {
                 let joined = match fields.get(k) {
@@ -669,7 +926,7 @@ fn join_kind<'a>(a: &Kind<'a>, b: &Kind<'a>) -> Kind<'a> {
         (Kind::Func(x), Kind::Func(y)) => {
             let mut list: Vec<Func<'a>> = x.iter().cloned().collect();
             for f in y.iter() {
-                if !list.iter().any(|g| g.ptr_eq(f)) && list.len() < 16 {
+                if !list.iter().any(|g| g.ptr_eq(f)) && list.len() < MAX_FUNCS {
                     list.push(f.clone());
                 }
             }

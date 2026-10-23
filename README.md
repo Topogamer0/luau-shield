@@ -57,11 +57,11 @@ This adds a line to your `rokit.toml`:
 
 ```toml
 [tools]
-luau-shield = "Topogamer0/luau-shield@0.1.0"
+luau-shield = "Topogamer0/luau-shield@0.2.0"
 ```
 
-Aftman and Foreman work the same way (`luau-shield = "Topogamer0/luau-shield@0.1.0"`
-in `aftman.toml`, or `luau-shield = { github = "Topogamer0/luau-shield", version = "0.1.0" }`
+Aftman and Foreman work the same way (`luau-shield = "Topogamer0/luau-shield@0.2.0"`
+in `aftman.toml`, or `luau-shield = { github = "Topogamer0/luau-shield", version = "0.2.0" }`
 in `foreman.toml`).
 
 Prebuilt binaries for Windows x64, macOS (Apple Silicon and Intel) and Linux
@@ -94,7 +94,7 @@ luau-shield init                                 # write a starter luau-shield.t
 | `-o, --output FILE` | Write the report to a file instead of stdout. |
 | `-c, --config FILE` | Configuration file (default: `luau-shield.toml` in the checked directory or a parent). `--no-config` ignores it. |
 | `--project FILE` | Rojo project used to map files to the DataModel (default: `default.project.json`). |
-| `-s, --min-severity LEVEL` | Only report findings at or above `low`, `medium`, `high` or `critical`. |
+| `-s, --min-severity LEVEL` | Only report findings at or above `info`, `low`, `medium`, `high` or `critical`. Default: `low` (`info` findings, such as admin-only code, are hidden). |
 | `--fail-on LEVEL` | Exit with code 1 when a reported finding is at or above this severity (`never` to always succeed). Default: `low`. |
 | `--disable RULES`, `--only RULES` | Comma-separated rule codes (`luau-shield003`) or names (`unverified-client-instance`). |
 | `--explain`, `--ollama-model MODEL` | Ask a local model for a detailed explanation (see below). |
@@ -336,12 +336,17 @@ local WEBHOOK = HttpService:GetSecret("discord_webhook")
    and your own [custom sources](docs/configuration.md).
 4. **Abstract interpretation**: the server code is executed symbolically. Each
    value remembers which untrusted data it contains and which checks it
-   passed. Branches are followed separately and merged, loops are iterated,
-   calls into local functions and required modules are analysed with the
-   actual arguments, validation functions are summarised.
+   passed. Branches are followed separately and merged, loops are iterated
+   (field by field over tables with known keys), calls into local functions
+   and required modules are analysed with the actual arguments, validation
+   functions are summarised, and calls too deep to follow are replaced by a
+   summary of what they return.
 5. **Sinks**: every rule decides whether the checks are enough for its sink;
    for example a number written to a currency needs a type check, both bounds
    and a NaN check, while an Instance needs an ownership or location check.
+   Code that only runs after a permission check on the sender
+   (`Admins.isAdmin(player)`) is reported as `info` ("admin only"), hidden by
+   default.
 
 The exact semantics (what counts as a check, what propagates) are documented
 in [docs/analysis.md](docs/analysis.md).
@@ -373,6 +378,11 @@ arguments = [2]
 [[sources]]
 function = "Net.handlers.*"
 trusted-parameters = 1
+
+# Your own permission checks (isAdmin, hasPermission... are built in): code
+# after them is reported as "info" ("admin only").
+[guards]
+functions = ["Staff.canModerate"]
 ```
 
 Full reference: [docs/configuration.md](docs/configuration.md).
@@ -408,7 +418,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: Topogamer0/luau-shield@v0.1.0
+      - uses: Topogamer0/luau-shield@v0.2.0
         with:
           path: src
           fail-on: high
@@ -440,27 +450,30 @@ truth. Only plain HTTP Ollama endpoints are supported.
 
 The test corpus in [`tests/fixtures`](tests/fixtures) contains, for every rule,
 vulnerable cases and closely related safe cases that are validated correctly.
+It includes the patterns of real-game reports (v0.2.0: copies by key, admin
+commands, sanitizers that build new tables, state machines) and every case
+found by the adversarial reviews of each release.
 `cargo test --test corpus` runs luau-shield on all of them and compares the
 findings with the expected ones line by line.
 
 | Rule | Vulnerable entries | Safe entries | Expected findings | Found | False positives | False negatives |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| luau-shield001 | 22 | 27 | 29 | 29 | 0 | 0 |
-| luau-shield002 | 21 | 21 | 25 | 25 | 0 | 0 |
-| luau-shield003 | 18 | 19 | 22 | 22 | 0 | 0 |
-| luau-shield004 | 9 | 9 | 9 | 9 | 0 | 0 |
+| luau-shield001 | 79 | 50 | 130 | 130 | 0 | 0 |
+| luau-shield002 | 22 | 21 | 26 | 26 | 0 | 0 |
+| luau-shield003 | 19 | 20 | 23 | 23 | 0 | 0 |
+| luau-shield004 | 9 | 10 | 9 | 9 | 0 | 0 |
 | luau-shield005 | 14 | 16 | 15 | 15 | 0 | 0 |
 | luau-shield006 | 12 | 9 | 14 | 14 | 0 | 0 |
-| luau-shield007 | 17 | 14 | 17 | 17 | 0 | 0 |
+| luau-shield007 | 58 | 25 | 58 | 58 | 0 | 0 |
 | luau-shield008 | 14 | 10 | 17 | 17 | 0 | 0 |
-| **Total** | **127** | **125** | **148** | **148** | **0** | **0** |
+| **Total** | **227** | **161** | **292** | **292** | **0** | **0** |
 
 The example game in [`examples/vulnerable-game`](examples/vulnerable-game)
 gives the 27 findings listed in its `EXPECTED.md`, and its fixed version gives
 none.
 
-`tests/fixtures/limitations` holds 9 cases that luau-shield is known to get
-wrong today, giving 5 false-positive findings and 5 missed findings. They are
+`tests/fixtures/limitations` holds 11 cases that luau-shield is known to get
+wrong today, giving 7 false-positive findings and 5 missed findings. They are
 counted separately so they never hide a regression:
 
 | Case | Mistake | Why |
@@ -469,6 +482,8 @@ counted separately so they never hide a regression:
 | `assert`s inside a function run with `pcall` | false positive | the `pcall` result is not linked to the asserts |
 | checks made in a first loop over a table, writes in a second loop | false positive | facts about loop elements stay in their loop |
 | a validator closure that checks upvalues instead of parameters (2 writes) | false positive | validator facts are learned for parameters only |
+| a recursive `deepCopy` of a nested, checked patch | false positive | the recursive call is cut off and its result loses the checks |
+| a state written first and its previous value tested after (luau-shield007) | false positive | only test-then-change state machines are recognised |
 | data relayed through a `BindableEvent` | false negative | signals are not followed |
 | data stored in a `ValueBase`/attribute and read back | false negative | Instance state is not tracked |
 | a write through an alias of a table | false negative | tables are tracked by value |
@@ -505,7 +520,14 @@ directions.
   or inside a validator that reads upvalues instead of its parameters do not
   protect the original.
 - **Depth**: loops are analysed a bounded number of times and calls are
-  followed up to `max-call-depth` (default 6).
+  followed up to `max-call-depth` (default 6); deeper calls are replaced by a
+  summary of what the function returns, and sinks inside them are not
+  reported.
+- **Permission guards are trusted by shape**: a function named like
+  `isAdmin` on a permission module, a high group rank or a server list named
+  like an admin list makes the code after it admin only (`info`). A guard
+  that is wrong (an `isAdmin` that returns true for everybody) is not
+  detected; turn the built-in guards off with `[guards] defaults = false`.
 
 Every known mistake has a test in
 [`tests/fixtures/limitations`](tests/fixtures/limitations). When luau-shield is

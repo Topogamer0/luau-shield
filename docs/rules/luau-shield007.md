@@ -304,6 +304,78 @@ functions it calls, silences the finding. Any of these is evidence:
    end)
    ```
 
+6. **A state machine**: the handler tests a state and changes it, before
+   the work, so that the same test fails on the next request. The work can
+   only run again after something else puts the state back:
+
+   ```lua
+   local state: { [Player]: string } = {}
+
+   Remotes.LeaveGame.OnServerEvent:Connect(function(player: Player)
+   	if state[player] ~= "Playing" then
+   		return
+   	end
+   	state[player] = "Menu" -- a second request is ignored
+   	store:UpdateAsync(player.UserId, save)
+   end)
+   ```
+
+   The test can compare with a string, a number, `true`, `false` or `nil`,
+   or check that the value exists, and the change can also be a removal
+   inside the branch that does the work, as in a helper called by the
+   handler:
+
+   ```lua
+   local function deleteSlot(player: Player, slot: number)
+   	if data[player].Slots[slot] then
+   		data[player].Slots[slot] = nil -- at most once per existing slot
+   		store:UpdateAsync(tostring(player.UserId), removeSlot(slot))
+   	end
+   end
+   ```
+
+   As with locks, a state keyed by the player limits that player; a state
+   shared by every player only counts when the handler waits while it is
+   closed (`task.wait(t)` or `task.delay(t, ...)` with `t` of at least 0.1
+   seconds, not chosen by the client). It does not count when:
+
+   - the handler changes it back before waiting (no other request ever sees
+     it closed), including when it schedules a cleanup with `task.delay` and
+     then reopens the state itself, when the only wait is on another path (a
+     back-off after a failed save), or when a function connected to
+     `Heartbeat` reopens it on the next frame;
+   - another path of the same handler writes a value that passes the test
+     again: a toggle (`if mode[player] == "On" then mode[player] = "Off"
+     return end; mode[player] = "On"`), or a client-chosen action that joins
+     and leaves on the same remote;
+   - the handler yields between the test and the change (every request fired
+     meanwhile passes the test): `task.wait`, `*Async` calls, `:Wait()`,
+     `WaitForChild`, `InvokeClient`, `BindableFunction:Invoke()`, Promise
+     `:await()`/`:expect()`, `coroutine.yield()`, also on the right of `and`
+     / `or` (`player.Character or player.CharacterAdded:Wait()`) and in
+     functions past the call depth;
+   - the change only happens later, in a function passed to `task.delay`,
+     `task.defer` or a Promise `:andThen()`;
+   - a local copy read *before* a yield is tested after it (the copy is
+     stale);
+   - its key is chosen by the client and the work needs the entry to be
+     empty (`if redeemed[player][code] then return end` → every new `code`
+     is empty), also through a local (`local uses = codeUses[code]`);
+   - the state table is created by the request itself (`local claimed =
+     {}` in the handler);
+   - only a local copy is changed (`local s = state[player]; s = "Menu"`),
+     or the state of another player (a helper called with the target of an
+     invite).
+
+   The state can be read into a local first (`local current =
+   state[player]`, also `local profile = Profiles[player]` then
+   `profile.Data.Claimed`), compared with named constants
+   (`State.Playing`), kept in an attribute (`player:GetAttribute("State")
+   ~= "Lobby"` then `player:SetAttribute("State", "Queue")`) or in a list
+   (`table.find(queue, player)` then `table.insert` or `table.remove`).
+   Wrapping the work in `pcall` and resetting the state after it is fine:
+   the call yields while the state is closed.
+
 What is **not** enough:
 
 - **A single flag for everyone, released as soon as the work is done.**
@@ -313,6 +385,9 @@ What is **not** enough:
   player (or keep the flag set for a fixed time, as above).
 - **A guard that is never set.** `if crafting[player] then return end`
   does nothing if no code path of the handler assigns `crafting[player]`.
+  Writing back the value that passes the test (`if state[player] ~=
+  "Playing" then return end` followed by `state[player] = "Playing"`) does
+  not close it either.
 - **A read that is not a guard.** `if summoned[player] then
   summoned[player]:Destroy() end` followed by `summoned[player] = pet`
   replaces the previous pet but never stops the next request.
@@ -363,6 +438,24 @@ The rule looks for evidence, it does not prove that the limit works:
   unresolved modules are not followed: expensive work hidden there is
   missed, and rate limiting implemented there is only seen when the call's
   name contains one of the words above.
+- **A state machine is only as good as its other transitions.** The rule
+  checks that the handler changes the state it tested and that no other path
+  of the same handler puts it back; it does not check how other remotes
+  bring it back. If another remote resets `state[player] = "Playing"`
+  without a limit, a client can alternate the two remotes. Rate limit the
+  cheaper remote too.
+- **Test first, then change.** A state written first and tested after
+  (`local previous = state[player]; state[player] = "Ready"; if previous ==
+  "Ready" then return end`) is not recognised and is still reported.
+- **Work under a condition is described, not excused.** When every expensive
+  call of a handler runs inside an `if` (`if data[player] then
+  store:SetAsync(...) end`) and not on the other branch, the message says it
+  runs "when a condition holds" instead of "on every request". It is still
+  reported: check that the client cannot make the condition true on every
+  request.
+- **Admin-only handlers are `info`.** Expensive work that only runs after a
+  [permission check](../configuration.md#guards) on the sender is reported
+  as `info`, hidden by default.
 - **Handlers that can only run a few times are still reported.** A
   `:Once` handler, a handler that disconnects itself, or work bounded by
   game state (a tool that is cloned only after its price was paid, an

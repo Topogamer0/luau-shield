@@ -290,6 +290,12 @@ validation function only contributes the facts it actually checks.
 - A check on a different value than the one that is used, for example a
   distance check on the crate being pushed instead of on the impulse.
 
+**Admin-only code.** Property writes that only run after a
+[permission check](../configuration.md#guards) on the sender are reported as
+`info` ("admin only"), hidden by default. Text is the exception: unfiltered
+text shown to other players stays reported whoever typed it, because Roblox
+requires filtering admin text too.
+
 ## Limitations
 
 - **The quality of a bound is not judged.** `math.clamp(speed, 0, 1e6)` is a

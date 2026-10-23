@@ -37,13 +37,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run luau-shield
-        uses: Topogamer0/luau-shield@v0.1.0   # use the latest release tag
+        uses: Topogamer0/luau-shield@v0.2.0   # use the latest release tag
         with:
           path: src
           fail-on: high
 ```
 
-Replace `v0.1.0` with the [latest release](https://github.com/Topogamer0/luau-shield/releases).
+Replace `v0.2.0` with the [latest release](https://github.com/Topogamer0/luau-shield/releases).
 When `version` is empty, the action installs the luau-shield release of the
 tag it is used from, so pinning the action also pins the analyzer. With a
 major-version tag such as `@v1`, the newest stable `1.x` release is installed.
@@ -69,8 +69,8 @@ visible, even when the job is red.
 | `build-from-source` | `"false"` | `"true"` compiles luau-shield from the action's source with `cargo build --release --locked`. The runner needs a Rust toolchain (GitHub-hosted runners have one; `dtolnay/rust-toolchain` installs a specific one). |
 | `config` | `""` | Configuration file (`--config`). Empty: `luau-shield.toml` is looked up in the checked directory and its parents. See [Configuration](configuration.md). |
 | `project` | `""` | Rojo project file (`--project`). Empty: the `project` key of the configuration, or `default.project.json`. |
-| `min-severity` | `low` | Lowest severity that is reported: `low`, `medium`, `high`, `critical`. |
-| `fail-on` | `high` | Fail the job when a reported finding has at least this severity: `low`, `medium`, `high`, `critical`, `never`. |
+| `min-severity` | `low` | Lowest severity that is reported: `info`, `low`, `medium`, `high`, `critical`. |
+| `fail-on` | `high` | Fail the job when a reported finding has at least this severity: `info`, `low`, `medium`, `high`, `critical`, `never`. |
 | `args` | `""` | Extra arguments for both runs, separated by whitespace, for example `--disable luau-shield007`. Do not pass `--format`, `--output` or `--fail-on`. |
 | `sarif-file` | `luau-shield.sarif` | Where the SARIF report is written, relative to the workspace. |
 | `upload-sarif` | `"true"` | Upload the report to code scanning. |
@@ -115,6 +115,12 @@ alert with its rule (`luau-shield001` ... `luau-shield008`), its severity, the f
 and the rule's explanation. Filter with `tool:luau-shield` to see only
 luau-shield alerts.
 
+Findings downgraded to `info` (admin-only code, see
+[Guards](configuration.md#guards)) are only uploaded with
+`min-severity: info`. They are written with SARIF level `note`, but GitHub
+shows a rule's security severity on every alert of that rule, so they appear
+with the severity of their rule (for example *High* for luau-shield001).
+
 Alerts follow the code: an alert is closed automatically when a later scan
 of the same branch no longer reports it. You can also dismiss an alert in the
 GitHub UI (false positive, won't fix, used in tests). A dismissal only exists
@@ -148,7 +154,7 @@ jobs:
         place: [lobby, match]
     steps:
       - uses: actions/checkout@v4
-      - uses: Topogamer0/luau-shield@v0.1.0
+      - uses: Topogamer0/luau-shield@v0.2.0
         with:
           path: places/${{ matrix.place }}
           project: places/${{ matrix.place }}/default.project.json
@@ -163,13 +169,13 @@ default):
 ```yaml
       - uses: Topogamer0/luau-shield@main
         with:
-          version: 0.1.0
+          version: 0.2.0
 ```
 
 **Use a CI-only configuration and skip a rule.**
 
 ```yaml
-      - uses: Topogamer0/luau-shield@v0.1.0
+      - uses: Topogamer0/luau-shield@v0.2.0
         with:
           path: src
           config: luau-shield.ci.toml
@@ -191,7 +197,7 @@ read-only token. If the SARIF upload is rejected for them, skip the upload
 for forks and keep the check:
 
 ```yaml
-      - uses: Topogamer0/luau-shield@v0.1.0
+      - uses: Topogamer0/luau-shield@v0.2.0
         with:
           upload-sarif: ${{ github.event.pull_request.head.repo.fork != true }}
 ```
@@ -210,7 +216,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: Topogamer0/luau-shield@v0.1.0
+      - uses: Topogamer0/luau-shield@v0.2.0
         with:
           path: src
           upload-sarif: false
@@ -250,6 +256,7 @@ any reported finding.
 | `luau-shield check src -s medium` | medium and above | any reported finding |
 | `luau-shield check src -s high --fail-on critical` | high and critical | a critical finding |
 | `luau-shield check src --fail-on never` | everything | never |
+| `luau-shield check src -s info` | everything, including admin-only `info` findings | any finding except `info` |
 | `luau-shield check src --only luau-shield004,luau-shield008` | code execution and secrets only | any of them |
 
 Flags override [`luau-shield.toml`](configuration.md).
@@ -287,7 +294,7 @@ luau-shield:
   stage: test
   image: ubuntu:24.04
   variables:
-    LUAU_SHIELD_VERSION: "0.1.0"
+    LUAU_SHIELD_VERSION: "0.2.0"
   before_script:
     - apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip jq
     - ASSET="luau-shield-${LUAU_SHIELD_VERSION}-linux-x86_64.zip"
@@ -356,7 +363,7 @@ archive, plus a `.sha256` checksum file for each ZIP:
 | macOS Intel | `luau-shield-<version>-macos-x86_64.zip` |
 | Linux x64 (static, any distribution) | `luau-shield-<version>-linux-x86_64.zip` |
 
-`<version>` is the tag without the leading `v` (`0.1.0` for `v0.1.0`). The
+`<version>` is the tag without the leading `v` (`0.2.0` for `v0.2.0`). The
 Windows binary needs no Visual C++ runtime and the Linux binary has no
 dependency at all.
 
@@ -375,7 +382,7 @@ This installs the latest release and records it in the project's
 
 ```toml
 [tools]
-luau-shield = "Topogamer0/luau-shield@0.1.0"
+luau-shield = "Topogamer0/luau-shield@0.2.0"
 ```
 
 In CI, install Rokit, then the tools of the project. `--no-trust-check`
@@ -400,17 +407,17 @@ aftman add Topogamer0/luau-shield
 
 ```toml
 [tools]
-luau-shield = "Topogamer0/luau-shield@0.1.0"
+luau-shield = "Topogamer0/luau-shield@0.2.0"
 ```
 
 ### Foreman
 
-`foreman.toml` (`version` is a semver requirement; `=0.1.0` pins an exact
+`foreman.toml` (`version` is a semver requirement; `=0.2.0` pins an exact
 release):
 
 ```toml
 [tools]
-luau-shield = { github = "Topogamer0/luau-shield", version = "0.1.0" }
+luau-shield = { github = "Topogamer0/luau-shield", version = "0.2.0" }
 ```
 
 Then run `foreman install`.
@@ -424,7 +431,7 @@ With a Rust toolchain:
 cargo install --git https://github.com/Topogamer0/luau-shield --locked
 
 # A specific release
-cargo install --git https://github.com/Topogamer0/luau-shield --tag v0.1.0 --locked
+cargo install --git https://github.com/Topogamer0/luau-shield --tag v0.2.0 --locked
 ```
 
 This is also the way to run luau-shield on platforms without a prebuilt

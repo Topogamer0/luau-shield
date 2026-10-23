@@ -300,6 +300,14 @@ What is **not** a check:
 - **`pcall`, rate limits and `allowed_mentions`.** They are good practice,
   but they do not constrain the value.
 
+**Admin-only code is reported as `info`.** A request built from client data
+after a permission check on the sender (`if not Admins.isAdmin(player) then
+return end`) is downgraded to `info` with "(admin only: ...)" in the message,
+and hidden at the default `min-severity`. The URL or body is still unchecked:
+a stolen admin account can reach any route of your backend. Run with
+`--min-severity info` to review these requests. See
+[Guards](../configuration.md#guards) for the checks that count.
+
 ## Limitations
 
 - **Valid is not authorized.** A number or an allow-listed key still decides

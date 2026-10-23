@@ -55,15 +55,15 @@ inputs:
     default: ""
   min-severity:
     description: >-
-      Lowest severity that is reported: low, medium, high or critical. Passed
+      Lowest severity that is reported: info, low, medium, high or critical. Passed
       as --min-severity, so it takes precedence over min-severity in
       luau-shield.toml.
     required: false
     default: "low"
   fail-on:
     description: >-
-      Fail the job when a reported finding has at least this severity: low,
-      medium, high, critical or never. Takes precedence over fail-on in
+      Fail the job when a reported finding has at least this severity: info,
+      low, medium, high, critical or never. Takes precedence over fail-on in
       luau-shield.toml. The SARIF report is uploaded before the job fails.
     required: false
     default: "high"

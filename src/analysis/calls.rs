@@ -2,17 +2,17 @@
 //! the standard library and of the Roblox API, `require`, and sinks.
 
 use super::interp::{Key, number_literal, unwrap_expr};
-use super::state::{Frame, State, Summary, SummaryCollector};
+use super::state::{Expect, Frame, Lit, ReturnSummary, State, Summary, SummaryCollector};
 use super::value::{
     Builtin, Checks, Closure, Flow, Func, Kind, ObjClass, SourceKind, Table, Target, Validator,
-    Value, check,
+    Value, VarId, Via, check,
 };
 use super::{Analyzer, EntryKind, ModuleState, compact, token_name, var_id};
 use crate::finding::Loc;
 use crate::project::ScriptKind;
 use crate::rules::sinks::{self, SinkKind};
 use crate::rules::{RuleId, is_data_container_name, is_stat_name};
-use full_moon::ast::{Expression, Parameter};
+use full_moon::ast::{Expression, Parameter, Suffix, Var};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -39,6 +39,250 @@ pub(crate) fn looks_like_validator(name: &str) -> bool {
                 .next()
                 .is_none_or(|c| c.is_ascii_uppercase() || c == '_')
     }) || lower.starts_with("valid")
+}
+
+/// Words in the names of functions that clean a value (`Look.sanitize`,
+/// `clampIndex`, `parseColor`): findings on their results suggest declaring
+/// them as sanitizers.
+const SANITIZER_WORDS: &[&str] = &[
+    "sanitiz", "sanitis", "validat", "clean", "normaliz", "normalis", "verif", "check", "coerce",
+    "clamp", "filter", "safe", "parse", "strict",
+];
+
+pub(crate) fn looks_like_sanitizer(name: &str) -> bool {
+    let last = name
+        .trim_end_matches("(...)")
+        .rsplit(['.', ':'])
+        .next()
+        .unwrap_or(name)
+        .to_ascii_lowercase();
+    SANITIZER_WORDS.iter().any(|w| last.contains(w))
+}
+
+/// The literal a value holds, for luau-shield007 state checks.
+pub(crate) fn literal_value(value: &Value<'_>) -> Option<Lit> {
+    if value.is_tainted() {
+        return None;
+    }
+    match &value.kind {
+        Kind::Nil => Some(Lit::Nil),
+        Kind::Bool(Some(b)) => Some(Lit::Bool(*b)),
+        Kind::Number(Some(n)) => Some(Lit::Num(Rc::from(n.to_string().as_str()))),
+        Kind::Str(Some(s)) => Some(Lit::Str(s.clone())),
+        _ => None,
+    }
+}
+
+/// A bound that is server data, or a parameter of a summarised function.
+fn trusted_bound(value: &Value<'_>) -> bool {
+    value
+        .flows
+        .iter()
+        .all(|f| f.source.kind == SourceKind::Probe)
+}
+
+/// The permission guard a privileged flow went through.
+fn guard_name(flow: &Flow) -> String {
+    flow.guard
+        .as_deref()
+        .unwrap_or("a permission check")
+        .to_string()
+}
+
+/// Suggests declaring the function a value came out of as a sanitizer.
+fn sanitizer_hint(via: &Via) -> String {
+    let name = &via.name;
+    let config = format!(
+        "`[[sanitizers]]` with `function = \"{}\"` in luau-shield.toml",
+        name.replace(':', ".")
+    );
+    if via.analysed {
+        format!(
+            " The value comes from `{name}`, which does not make these checks on every path \
+             (or uses a bound that comes from the client): if `{name}` does validate it, \
+             declare it as a sanitizer ({config})."
+        )
+    } else {
+        format!(
+            " The value comes from `{name}`, which luau-shield could not follow: if `{name}` \
+             validates it, declare it as a sanitizer ({config})."
+        )
+    }
+}
+
+/// Marks the results of the sanitizer-like function `name`.
+fn mark_via<'a>(values: &mut [Value<'a>], name: &str, analysed: bool) {
+    if !looks_like_sanitizer(name) {
+        return;
+    }
+    let made = values
+        .iter()
+        .flat_map(|v| v.deep_flows())
+        .fold(0, |acc, f| acc | f.checks);
+    let via = Rc::new(Via {
+        name: Rc::from(name.trim_end_matches("(...)")),
+        analysed,
+        made,
+    });
+    for value in values {
+        value.set_via_deep(&via);
+    }
+}
+
+/// A return value of `summary` for the actual arguments `args`: flows of
+/// each probe become the flows of the matching argument, with the checks
+/// the function made on the way.
+fn instantiate<'a>(
+    summary: &ReturnSummary<'a>,
+    value: &Value<'a>,
+    args: &[Value<'a>],
+    loc: Loc,
+    name: &str,
+    depth: usize,
+) -> Value<'a> {
+    let mut out = Value {
+        kind: value.kind.clone(),
+        player_rel: value.player_rel,
+        ..Value::default()
+    };
+    // A function that returns one of its parameters (`assign(target,
+    // source)`, `append(list, item)`) may have stored the other arguments in
+    // it: their untrusted data comes back too.
+    // Only the parameter itself, unchanged (`return target`): not a value
+    // computed from it (`math.clamp(quantity, 1, max)`) nor read from it.
+    let returns_param = !matches!(
+        value.kind,
+        Kind::Number(_) | Kind::Str(_) | Kind::Bool(_) | Kind::Nil
+    ) && value.flows.iter().any(|f| {
+        f.raw
+            && value.path.as_deref() == Some(f.source.name.as_str())
+            && summary.probes.iter().any(|p| *p == Some(f.source.id))
+    });
+    if returns_param && depth == 0 {
+        for (i, arg) in args.iter().enumerate() {
+            let returned = value
+                .flows
+                .iter()
+                .any(|f| summary.probes.get(i).copied().flatten() == Some(f.source.id));
+            if !returned {
+                for actual in arg.deep_flows() {
+                    let stepped = actual.with_step(loc, format!("returned by `{name}`"));
+                    out.add_flows([Flow {
+                        raw: false,
+                        ..stepped
+                    }]);
+                }
+            }
+        }
+    }
+    for flow in &value.flows {
+        let probe = summary
+            .probes
+            .iter()
+            .position(|p| *p == Some(flow.source.id));
+        match probe {
+            Some(i) => {
+                let Some(arg) = args.get(i) else {
+                    continue;
+                };
+                // The summary compared parameters with each other as if they
+                // were trusted (`clamp(v, lo, hi)`): bounds, allow-lists and
+                // ownership relative to an argument the client controls at
+                // this call prove nothing.
+                let relative = flow.checks & check::RELATIVE != 0
+                    && args
+                        .iter()
+                        .enumerate()
+                        .any(|(j, a)| j != i && client_bound(a));
+                let made = if relative {
+                    flow.checks & !check::RELATIVE_FACTS
+                } else {
+                    flow.checks
+                } & !(check::PRIVILEGED | check::RELATIVE);
+                for actual in arg.deep_flows() {
+                    let stepped = actual.with_step(loc, format!("returned by `{name}`"));
+                    out.add_flows([Flow {
+                        checks: actual.checks | made,
+                        raw: actual.raw && flow.raw,
+                        instance_data: actual.instance_data || flow.instance_data,
+                        ..stepped
+                    }]);
+                }
+            }
+            None if flow.source.kind == SourceKind::Probe => {}
+            None => out.add_flows([flow.clone()]),
+        }
+    }
+    if let (Kind::Table(table), true) = (&value.kind, depth < 6) {
+        // Server tables (an item catalog) are shared as they are.
+        let probe = |v: &Value<'a>| v.flows.iter().any(|f| f.source.kind == SourceKind::Probe);
+        if table.fresh_frame.is_none() && !value.any_stored(&probe) {
+            return out;
+        }
+        let mut table = (**table).clone();
+        for field in table.fields.values_mut() {
+            *field = instantiate(summary, field, args, loc, name, depth + 1);
+        }
+        if let Some(dynamic) = table.dynamic.as_mut() {
+            **dynamic = instantiate(summary, dynamic, args, loc, name, depth + 1);
+        }
+        table.fresh_frame = None;
+        out.kind = Kind::Table(Rc::new(table));
+    }
+    out
+}
+
+/// A wait or delay shorter than this (a frame, `task.wait()`) does not
+/// limit how often a handler runs.
+const MIN_LIMIT_SECONDS: f64 = 0.1;
+
+/// The closures in a value (also stored in its tables).
+fn collect_closures<'a>(value: &Value<'a>, out: &mut Vec<Rc<Closure<'a>>>, depth: usize) {
+    match &value.kind {
+        Kind::Func(funcs) => {
+            for func in funcs.iter() {
+                if let Func::Closure(c) = func {
+                    out.push(c.clone());
+                }
+            }
+        }
+        Kind::Table(table) if depth < 6 => {
+            for v in table.fields.values().chain(table.dynamic.as_deref()) {
+                collect_closures(v, out, depth + 1);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Client data that can act as a bound or a list for another argument (an
+/// id the server allow-listed only selects server data).
+pub(crate) fn client_bound(value: &Value<'_>) -> bool {
+    value.deep_flows().iter().any(|f| {
+        f.source.kind != SourceKind::Probe && f.checks & (check::ALLOWLIST | check::VALIDATED) == 0
+    })
+}
+
+/// What a summary proved about argument `i`, at a call where `clients`
+/// tells which arguments are client data: bounds, allow-lists and ownership
+/// relative to another argument the client chose prove nothing
+/// (`inRange(amount, 1, claimedBalance)`).
+pub(crate) fn relative_checks(clients: &[bool], i: usize, checks: Checks) -> Checks {
+    let relative = checks & check::RELATIVE != 0;
+    if relative && clients.iter().enumerate().any(|(j, c)| *c && j != i) {
+        checks & !(check::RELATIVE_FACTS | check::RELATIVE)
+    } else {
+        checks & !check::RELATIVE
+    }
+}
+
+/// A bound that is (derived from) a parameter of the function being
+/// summarised.
+fn probe_bound(value: &Value<'_>) -> bool {
+    value
+        .flows
+        .iter()
+        .any(|f| f.source.kind == SourceKind::Probe)
 }
 
 /// Does `name` look like an asserting validator (`assertAmount`, `ensureOwner`)?
@@ -218,12 +462,151 @@ impl<'a> Analyzer<'a> {
     // luau-shield007 bookkeeping
     // ------------------------------------------------------------------
 
-    fn note_expensive(&mut self, what: String) {
+    fn note_expensive(&mut self, frame: &Frame<'a>, state: &State<'a>, what: String) {
         if self.peek > 0 {
             return;
         }
+        let conditional = self.branch_depth > 0;
+        // The function holding the innermost condition, unless it is the
+        // handler itself or an anonymous function.
+        let function = self
+            .branch_owners
+            .last()
+            .filter(|(name, depth)| *depth > 1 && !name.starts_with('<'))
+            .map(|(name, _)| name.clone());
+        let _ = frame;
         if let Some(entry) = self.entry.as_mut() {
-            entry.expensive.push(what);
+            entry.expensive.push(super::Expensive {
+                what,
+                consumed: state
+                    .consumed
+                    .iter()
+                    .map(|(k, (pp, e))| (k.clone(), *pp, e.clone()))
+                    .collect(),
+                conditional,
+                function,
+                admin: state.admin.clone(),
+            });
+        }
+    }
+
+    /// How deep calls are followed: inside a return summary, half as deep
+    /// (summaries are approximations, and each one starts a new call stack).
+    pub(crate) fn max_depth(&self) -> usize {
+        if self.summary_nesting > 0 {
+            (self.config.max_call_depth / 2).max(2)
+        } else {
+            self.config.max_call_depth
+        }
+    }
+
+    /// The handler yields (`task.wait`, an `*Async` call): states it tested
+    /// may change meanwhile (the tests no longer hold), and states it closed
+    /// were seen closed by other requests.
+    pub(crate) fn note_yield(&mut self, state: &mut State<'a>) {
+        if self.peek > 0 {
+            return;
+        }
+        self.yield_count += 1;
+        if self.entry.is_none() {
+            return;
+        }
+        state.expects.clear();
+        let closed: Vec<Rc<str>> = state.consumed.keys().cloned().collect();
+        state.waited.extend(closed);
+        // A local copy of a state read before now (`local current =
+        // state[player]`) is stale: testing it no longer tests the state.
+        for value in state.vars.values_mut() {
+            if value.alias.is_some() {
+                value.alias = None;
+            }
+        }
+    }
+
+    pub(crate) fn expensive_count(&self) -> usize {
+        self.entry.as_ref().map_or(0, |e| e.expensive.len())
+    }
+
+    pub(crate) fn enter_branch(&mut self, frame: &Frame<'a>) {
+        self.branch_depth += 1;
+        self.branch_owners
+            .push((frame.name.clone(), self.stack.len()));
+    }
+
+    pub(crate) fn leave_branch(&mut self) {
+        self.branch_depth -= 1;
+        self.branch_owners.pop();
+    }
+
+    /// luau-shield007: `text` (a state expression such as `state[player]`)
+    /// is assigned `value`. When a condition on this path tested it and the
+    /// new value makes that test fail next time, the state is consumed.
+    pub(crate) fn consume_expect(
+        &mut self,
+        state: &mut State<'a>,
+        text: &str,
+        value: &Value<'a>,
+        per_player: bool,
+        client_key: bool,
+    ) {
+        if self.entry.is_none() || self.peek > 0 {
+            return;
+        }
+        let lit = literal_value(value);
+        let truthy = if value.is_tainted() {
+            None
+        } else {
+            value.truthy_const()
+        };
+        // A write on a path where the state is not closed: if it can reopen
+        // a state another path closed (`if mode == "On" then mode = "Off"
+        // return end; mode = "On"`), the client alternates between them.
+        if !state.consumed.contains_key(text) {
+            if let Some(entry) = self.entry.as_mut() {
+                entry
+                    .state_writes
+                    .push((Rc::from(text), lit.clone(), truthy));
+            }
+        }
+        // Writing back a value that passes the original test opens the state
+        // again; if the handler did not yield in between, no other request
+        // ever saw it closed.
+        if let Some((per_player, expect)) = state.consumed.get(text).cloned() {
+            if !expect.violated_by(lit.as_ref(), truthy) {
+                state.consumed.remove(text);
+                let waited = state.waited.remove(text);
+                // A state shared by every player must stay closed for a
+                // while on this path (a wait on another path, such as a
+                // back-off after a failed save, does not count).
+                let paused = state.paused.remove(text);
+                if !waited || (!per_player && !paused) {
+                    if let Some(entry) = self.entry.as_mut() {
+                        entry.released_early.insert(Rc::from(text));
+                    }
+                }
+            }
+            return;
+        }
+        let Some(expect) = state.expects.remove(text) else {
+            return;
+        };
+        // With a key chosen by the client (`redeemed[player][code]`), every
+        // new key starts empty: only work that needs an existing entry
+        // (`if slots[slot] then slots[slot] = nil ... end`) is limited.
+        if client_key
+            && matches!(
+                expect,
+                Expect::Falsy | Expect::Ne(_) | Expect::Eq(Lit::Nil) | Expect::Eq(Lit::Bool(false))
+            )
+        {
+            return;
+        }
+        if expect.violated_by(lit.as_ref(), truthy) {
+            let entry = state
+                .consumed
+                .entry(Rc::from(text))
+                .or_insert((false, expect));
+            entry.0 |= per_player;
         }
     }
 
@@ -258,54 +641,75 @@ impl<'a> Analyzer<'a> {
         if self.peek > 0 || self.quiet > 0 {
             return;
         }
+        let economy_like = matches!(
+            kind,
+            SinkKind::Economy
+                | SinkKind::DataKey
+                | SinkKind::Property
+                | SinkKind::Text
+                | SinkKind::InstanceProperty
+        );
+        // The first unchecked flow decides the finding; a flow that only
+        // reaches the sink behind a permission guard is kept as a fallback
+        // and reported as `info`.
+        let mut privileged: Option<(RuleId, String, Flow, String)> = None;
         for flow in value.deep_flows() {
-            let economy_like = matches!(
-                kind,
-                SinkKind::Economy
-                    | SinkKind::DataKey
-                    | SinkKind::Property
-                    | SinkKind::Text
-                    | SinkKind::InstanceProperty
-            );
-            if flow.instance_data && economy_like {
-                if let Some(missing) = sinks::missing(SinkKind::InstanceUse, &flow) {
-                    self.report(
-                        RuleId::Ls003,
-                        loc,
-                        format!(
-                            "data read from `{}`, an Instance chosen by the client, {what}",
-                            flow.source.name
-                        ),
-                        Some(&flow),
-                        Some(missing),
+            let failure = if flow.instance_data && economy_like {
+                sinks::missing(SinkKind::InstanceUse, &flow).map(|missing| {
+                    let message = format!(
+                        "data read from `{}`, an Instance chosen by the client, {what}",
+                        flow.source.name
                     );
-                    return;
+                    (RuleId::Ls003, message, missing)
+                })
+            } else {
+                let check_kind = if flow.instance_data {
+                    SinkKind::InstanceUse
+                } else {
+                    kind
+                };
+                sinks::missing(check_kind, &flow).map(|missing| {
+                    let subject = match value.path.as_deref() {
+                        Some(path)
+                            if path != flow.source.name
+                                && path.len() <= 60
+                                && !path.contains('(') =>
+                        {
+                            format!("`{path}` (client-controlled, from `{}`)", flow.source.name)
+                        }
+                        _ => format!("`{}` (client-controlled)", flow.source.name),
+                    };
+                    (rule, format!("{subject} {what}"), missing)
+                })
+            };
+            let Some((rule, message, mut missing)) = failure else {
+                continue;
+            };
+            // A function luau-shield followed that checks nothing is not a
+            // sanitizer: no hint then.
+            if let Some(via) = &flow.via {
+                // A function that checks nothing but types (a whitespace
+                // cleaner, a command parser) is not meant as a sanitizer.
+                if !via.analysed || via.made & check::ALL & !check::ANY_TYPE != 0 {
+                    missing.push_str(&sanitizer_hint(via));
+                }
+            }
+            // Running code chosen by a chat message stays critical even for
+            // admins: a stolen admin account or a wrong asset id runs
+            // arbitrary code on the server. Text shown to other players must
+            // be filtered whoever typed it (Roblox rules apply to admins).
+            if flow.any(check::PRIVILEGED) && rule != RuleId::Ls004 && kind != SinkKind::Text {
+                if privileged.is_none() {
+                    privileged = Some((rule, message, flow, missing));
                 }
                 continue;
             }
-            let check_kind = if flow.instance_data {
-                SinkKind::InstanceUse
-            } else {
-                kind
-            };
-            if let Some(missing) = sinks::missing(check_kind, &flow) {
-                let subject = match value.path.as_deref() {
-                    Some(path)
-                        if path != flow.source.name && path.len() <= 60 && !path.contains('(') =>
-                    {
-                        format!("`{path}` (client-controlled, from `{}`)", flow.source.name)
-                    }
-                    _ => format!("`{}` (client-controlled)", flow.source.name),
-                };
-                self.report(
-                    rule,
-                    loc,
-                    format!("{subject} {what}"),
-                    Some(&flow),
-                    Some(missing),
-                );
-                return;
-            }
+            self.report(rule, loc, message, Some(&flow), Some(missing));
+            return;
+        }
+        if let Some((rule, message, flow, missing)) = privileged {
+            let guard = guard_name(&flow);
+            self.report_downgraded(rule, loc, message, Some(&flow), Some(missing), guard);
         }
     }
 
@@ -314,6 +718,7 @@ impl<'a> Analyzer<'a> {
         if self.peek > 0 || self.quiet > 0 {
             return;
         }
+        let mut privileged: Option<(&Flow, String)> = None;
         for flow in &value.flows {
             if !flow.raw
                 || flow.any(
@@ -326,6 +731,12 @@ impl<'a> Analyzer<'a> {
                 continue;
             }
             if let Some(missing) = sinks::missing(SinkKind::InstanceUse, flow) {
+                // Admin tools act on Instances the admin picked (kick a
+                // player, delete a part): reported as `info`.
+                if flow.any(check::PRIVILEGED) {
+                    privileged.get_or_insert((flow, missing));
+                    continue;
+                }
                 self.report(
                     RuleId::Ls003,
                     loc,
@@ -338,6 +749,21 @@ impl<'a> Analyzer<'a> {
                 );
                 return;
             }
+        }
+        if let Some((flow, missing)) = privileged {
+            let message = format!(
+                "{what} on `{}`, an Instance chosen by the client",
+                flow.source.name
+            );
+            let guard = guard_name(flow);
+            self.report_downgraded(
+                RuleId::Ls003,
+                loc,
+                message,
+                Some(flow),
+                Some(missing),
+                guard,
+            );
         }
     }
 
@@ -360,7 +786,11 @@ impl<'a> Analyzer<'a> {
                 self.check_instance_use(base, loc, &format!("`{target}` is set"));
             }
         }
-        let fresh = matches!(&base.kind, Kind::Table(t) if t.fresh_frame == Some(frame.id));
+        // A table built during this request by a function still running
+        // (`assign({ Coins = 0 }, { Gems = amount })`) is not saved data.
+        let fresh = matches!(&base.kind, Kind::Table(t) if t.fresh_frame.is_some_and(|id| {
+            id == frame.id || self.live_frames.contains(&id)
+        }));
         let client_table = base.flows.iter().any(|f| f.raw);
         // The container is named by the value's path (`player.leaderstats.Coins`)
         // and by the code itself (`profile` in `profile[key] = value`).
@@ -483,7 +913,9 @@ impl<'a> Analyzer<'a> {
             let attr = args.first();
             let value = args.get(1);
             if let (Some(a), Some(v)) = (attr.and_then(|a| a.str_const()), value) {
-                self.note_lock_write(&format!("{recv_display}@{a}"), v, recv.player_rel);
+                let lock = format!("{}@{a}", super::refine::declared_text(frame, recv_display));
+                self.consume_expect(state, &lock, v, recv.player_rel, recv.is_tainted());
+                self.note_lock_write(&lock, v, recv.player_rel);
             }
             if let (Some(attr), Some(value)) = (attr, value) {
                 let what = format!("is written by `{call}`");
@@ -805,14 +1237,29 @@ impl<'a> Analyzer<'a> {
                     .filter(|(i, _)| args.get(*i).is_some_and(|a| a.is_tainted()))
                     .filter_map(|(i, e)| self.target_of(frame, e).map(|t| (i, t)))
                     .collect();
-                let result = self.call_closure(state, closure.clone(), args, None, loc, false);
+                let clients: Vec<bool> = args.iter().map(client_bound).collect();
+                let followed = self.peek == 0
+                    && self.budget > 0
+                    && self.stack.len() < self.max_depth()
+                    && !self.stack.contains(&closure.key());
+                let mut result = self.call_closure(state, closure.clone(), args, None, loc, false);
+                if followed && !state.dead {
+                    self.write_back_tables(frame, state, closure, arg_exprs);
+                }
+                let called = display.trim_end_matches("(...)");
+                if called != &*closure.name {
+                    for value in &mut result {
+                        value.rename_via_deep(&closure.name, called);
+                    }
+                }
                 // Facts the callee guarantees about its arguments when it returns.
                 if !tainted_targets.is_empty() && !state.dead {
-                    if let Some(summary) = self.summary_of(closure, state) {
+                    if let Some(summary) = self.summary_of(closure, state, false) {
                         let offset = usize::from(closure.is_method);
                         for (i, target) in tainted_targets {
                             if let Some(checks) = summary.exit.get(i + offset) {
-                                state.add_checks(&target, *checks);
+                                let checks = relative_checks(&clients, i, *checks);
+                                state.add_checks(&target, checks);
                             }
                         }
                     }
@@ -840,7 +1287,10 @@ impl<'a> Analyzer<'a> {
         let last_name = callee_path
             .and_then(|p| p.last().cloned())
             .unwrap_or_else(|| display.rsplit(['.', ':']).next().unwrap_or("").to_string());
-        if statement && self.config.trust_unresolved_validators && looks_like_assertion(&last_name)
+        if statement
+            && self.config.trust_unresolved_validators
+            && self.summary_nesting == 0
+            && looks_like_assertion(&last_name)
         {
             for (i, expr) in arg_exprs.iter().enumerate() {
                 if args.get(i).is_some_and(|a| a.is_tainted()) {
@@ -868,7 +1318,7 @@ impl<'a> Analyzer<'a> {
         for arg in &args {
             for func in arg.funcs() {
                 if let Func::Closure(closure) = &func {
-                    if self.peek == 0 && self.inlined_callbacks.insert(closure.key()) {
+                    if self.peek == 0 && self.first_inline(closure.key(), state) {
                         let mut s = state.clone();
                         let _ = self.call_closure(
                             &mut s,
@@ -891,7 +1341,9 @@ impl<'a> Analyzer<'a> {
             result.kind = Kind::Func(Rc::new(funcs));
         }
         result.path = Some(Rc::from(format!("{display}(...)").as_str()));
-        vec![result]
+        let mut results = vec![result];
+        mark_via(&mut results, display, false);
+        results
     }
 
     /// Calls a closure: binds the arguments, interprets the body and returns
@@ -923,17 +1375,42 @@ impl<'a> Analyzer<'a> {
         let key = closure.key();
         if self.peek > 0
             || self.budget == 0
-            || self.stack.len() >= self.config.max_call_depth
+            || self.stack.len() >= self.max_depth()
             || self.stack.contains(&key)
         {
+            // Too deep (or out of budget) to follow here: use what the
+            // function returns in terms of its parameters, computed once.
+            let recursive = self.stack.contains(&key);
+            let too_deep = self.stack.len() >= self.max_depth();
+            if self.peek == 0 && !recursive && too_deep && self.budget > 0 && summary.is_none() {
+                if let Some(rs) = self.return_summary(&closure, state) {
+                    let mut values: Vec<Value<'a>> = rs
+                        .returns
+                        .iter()
+                        .map(|v| instantiate(&rs, v, &args, loc, &closure.name, 0))
+                        .collect();
+                    for (id, value) in &rs.captured {
+                        let value = instantiate(&rs, value, &args, loc, &closure.name, 0);
+                        state.vars.insert(*id, value);
+                    }
+                    if rs.yields {
+                        self.note_yield(state);
+                    }
+                    mark_via(&mut values, &closure.name, true);
+                    return (values, None);
+                }
+            }
             let mut v = Value::unknown();
             for a in args.iter().chain(rest.iter()) {
                 v.add_flows(a.derived().flows);
             }
-            return (vec![v], None);
+            let mut values = vec![v];
+            mark_via(&mut values, &closure.name, false);
+            return (values, None);
         }
         self.stack.push(key);
         let id = self.new_frame_id();
+        self.live_frames.insert(id);
         let mut frame = Frame {
             id,
             file: closure.file,
@@ -947,6 +1424,7 @@ impl<'a> Analyzer<'a> {
             loops: Vec::new(),
             summary,
             name: closure.name.clone(),
+            entry,
         };
         let mut inner = std::mem::take(state);
         let mut args = args.into_iter();
@@ -990,6 +1468,7 @@ impl<'a> Analyzer<'a> {
         states.push(body_end);
         *state = State::join_all(states);
         self.stack.pop();
+        self.live_frames.remove(&id);
         let mut returns = frame.returns.take().unwrap_or_default();
         if falls_through && !returns.is_empty() {
             returns = returns.iter().map(|v| v.join(&Value::nil())).collect();
@@ -997,11 +1476,208 @@ impl<'a> Analyzer<'a> {
         if returns.is_empty() {
             returns.push(Value::nil());
         }
-        // Conditions refer to the callee's variables: they mean nothing here.
+        // Conditions refer to the callee's variables: they mean nothing here,
+        // also inside returned tables (`return { price = priceOk }`).
         for value in &mut returns {
-            value.defined_by = None;
+            value.clear_defined_by_deep();
         }
+        mark_via(&mut returns, &closure.name, true);
         (returns, frame.summary.take())
+    }
+
+    /// Tables are tracked by value: what a function stored in a table it
+    /// received (`addBonus(rewards, bonus)` sets `rewards.Gems`) is copied
+    /// back to the caller's variable.
+    fn write_back_tables(
+        &mut self,
+        frame: &Frame<'a>,
+        state: &mut State<'a>,
+        closure: &Rc<Closure<'a>>,
+        arg_exprs: &[&'a Expression],
+    ) {
+        let offset = usize::from(closure.is_method);
+        let params = closure.body.parameters().iter().filter_map(|p| match p {
+            Parameter::Name(token) => Some(var_id(closure.file, token)),
+            _ => None,
+        });
+        for (i, param) in params.enumerate() {
+            let Some(expr) = arg_exprs.get(i + offset) else {
+                break;
+            };
+            let Some(Target::Var(caller)) = self.target_of(frame, expr) else {
+                continue;
+            };
+            let (Some(after), Some(before)) = (state.vars.get(&param), state.vars.get(&caller))
+            else {
+                continue;
+            };
+            let changed = match (&after.kind, &before.kind) {
+                (Kind::Table(a), Kind::Table(b)) => !Rc::ptr_eq(a, b),
+                _ => false,
+            };
+            if changed {
+                let mut value = after.clone();
+                value.path = before.path.clone();
+                value.defined_by = before.defined_by;
+                value.alias = before.alias.clone();
+                state.vars.insert(caller, value);
+            }
+        }
+    }
+
+    /// Should a callback passed to an unknown function be analysed here?
+    /// Once, unless it was only analysed after a permission guard and this
+    /// caller has none (its findings are not admin only then).
+    fn first_inline(&mut self, key: (usize, usize), state: &State<'a>) -> bool {
+        let admin = state.admin.is_some();
+        if self.inlined_callbacks.contains(&(key, false))
+            || (admin && self.inlined_callbacks.contains(&(key, true)))
+        {
+            return false;
+        }
+        self.inlined_callbacks.insert((key, admin))
+    }
+
+    /// What `closure` returns in terms of its parameters (computed once,
+    /// with placeholder "probe" arguments and a fresh call stack). Used when
+    /// a call cannot be followed: the checks a sanitizer makes on its
+    /// arguments still apply to its result.
+    fn return_summary(
+        &mut self,
+        closure: &Rc<Closure<'a>>,
+        base: &State<'a>,
+    ) -> Option<Rc<ReturnSummary<'a>>> {
+        let key = closure.key();
+        match self.return_summaries.get(&key) {
+            // Module state read by the function may have received client
+            // data since the summary was made: make it again.
+            // (A handler starts from the script's state: no client data in
+            // module tables until it writes some.)
+            Some(Some(cached))
+                if cached.epoch != self.client_epoch && self.client_epoch != self.entry_epoch => {}
+            Some(cached) => return cached.clone(),
+            None => {}
+        }
+        let variadic = closure
+            .body
+            .parameters()
+            .iter()
+            .any(|p| matches!(p, Parameter::Ellipsis(_)));
+        if variadic
+            || self.summary_nesting >= 2
+            || self.summary_spent >= super::SUMMARY_TOTAL_BUDGET
+        {
+            return None;
+        }
+        self.return_summaries.insert(key, None);
+        let saved_stack = std::mem::take(&mut self.stack);
+        let saved_entry = self.entry.take();
+        let saved_budget = self.budget;
+        let saved_guard = self.guard.take();
+        let saved_sender = self.guard_sender.take();
+        // Callbacks analysed quietly here must still be analysed for real
+        // (with findings) when a handler reaches them.
+        let saved_inlined = self.inlined_callbacks.clone();
+        self.quiet += 1;
+        self.summary_nesting += 1;
+        const SUMMARY_BUDGET: usize = 4_000;
+        self.budget = SUMMARY_BUDGET.min(saved_budget);
+        let mut args = Vec::new();
+        let mut probes = Vec::new();
+        if closure.is_method {
+            // `self` is a parameter too: what is read from the object
+            // (`self.quantity`) comes back from the real receiver.
+            let loc = closure.loc;
+            let source = self.new_source(
+                SourceKind::Probe,
+                "self".to_string(),
+                String::new(),
+                loc,
+                None,
+            );
+            probes.push(Some(source.id));
+            args.push(self.tainted(source));
+        }
+        for param in closure.body.parameters() {
+            if let Parameter::Name(token) = param {
+                let loc = self.loc(closure.file, token);
+                let source = self.new_source(
+                    SourceKind::Probe,
+                    token_name(token),
+                    String::new(),
+                    loc,
+                    None,
+                );
+                probes.push(Some(source.id));
+                args.push(self.tainted(source));
+            }
+        }
+        let mut state = base.clone();
+        // What the function returns does not depend on this caller's
+        // permission check.
+        state.admin = None;
+        let yields_before = self.yield_count;
+        let returns =
+            self.call_closure(&mut state, closure.clone(), args, None, closure.loc, false);
+        let yields = self.yield_count != yields_before;
+        // Closures it returns (`{ unwrap = function() return value end }`)
+        // read its parameters and locals later: keep their values.
+        let mut closures = Vec::new();
+        for value in &returns {
+            collect_closures(value, &mut closures, 0);
+        }
+        let mut captured: Vec<(VarId, Value<'a>)> = Vec::new();
+        for closure in closures {
+            for id in closure.captured.names.values() {
+                if base.vars.contains_key(id) || captured.iter().any(|(c, _)| c == id) {
+                    continue;
+                }
+                if let Some(value) = state.vars.get(id) {
+                    captured.push((*id, value.clone()));
+                }
+            }
+        }
+        let exhausted = self.budget == 0;
+        let used = SUMMARY_BUDGET.min(saved_budget) - self.budget;
+        self.summary_spent += used;
+        self.quiet -= 1;
+        self.summary_nesting -= 1;
+        // The summary is paid by the handler that needed it.
+        self.budget = saved_budget.saturating_sub(used);
+        self.entry = saved_entry;
+        self.guard = saved_guard;
+        self.guard_sender = saved_sender;
+        self.stack = saved_stack;
+        self.inlined_callbacks = saved_inlined;
+        // A summary cut short by its budget is incomplete: do not trust it.
+        if exhausted {
+            return None;
+        }
+        let summary = Rc::new(ReturnSummary {
+            probes: probes.clone(),
+            returns,
+            captured,
+            yields,
+            epoch: self.client_epoch,
+        });
+        // Client data read from module state (`return pending[slot]` after
+        // another function stored the client's offer there) belongs to this
+        // caller: such a summary is not reused.
+        let foreign = summary
+            .returns
+            .iter()
+            .chain(summary.captured.iter().map(|(_, v)| v))
+            .any(|v| {
+                v.deep_flows()
+                    .iter()
+                    .any(|f| !probes.contains(&Some(f.source.id)))
+            });
+        if foreign {
+            self.return_summaries.remove(&key);
+        } else {
+            self.return_summaries.insert(key, Some(summary.clone()));
+        }
+        Some(summary)
     }
 
     /// What `closure` guarantees about its parameters (computed once, with
@@ -1010,15 +1686,28 @@ impl<'a> Analyzer<'a> {
         &mut self,
         closure: &Rc<Closure<'a>>,
         base: &State<'a>,
+        guard: bool,
     ) -> Option<Rc<Summary>> {
         let key = closure.key();
         if let Some(cached) = self.summaries.get(&key) {
             return cached.clone();
         }
-        if self.stack.len() >= self.config.max_call_depth {
+        // Past the depth limit, only validators used as guards (`if not
+        // Validate.amount(x) then return end`) are worth summarising.
+        if self.summary_nesting >= 2 || (!guard && self.stack.len() >= self.max_depth()) {
             return None;
         }
         self.summaries.insert(key, None);
+        // A validator used as a guard past the depth limit is summarised with
+        // a fresh call stack, so that it still counts.
+        let fresh = self.stack.len() >= self.max_depth();
+        let saved_stack = if fresh {
+            std::mem::take(&mut self.stack)
+        } else {
+            self.stack.clone()
+        };
+        let saved_inlined = self.inlined_callbacks.clone();
+        self.summary_nesting += u32::from(fresh);
         let saved_entry = self.entry.take();
         let saved_budget = self.budget;
         let saved_peek = self.peek;
@@ -1064,6 +1753,9 @@ impl<'a> Analyzer<'a> {
         self.peek = saved_peek;
         self.budget = saved_budget;
         self.entry = saved_entry;
+        self.stack = saved_stack;
+        self.inlined_callbacks = saved_inlined;
+        self.summary_nesting -= u32::from(fresh);
         let n = params.len();
         let offset = usize::from(closure.is_method);
         let summary = collector.map(|c| {
@@ -1168,6 +1860,7 @@ impl<'a> Analyzer<'a> {
                     arg_exprs.iter().skip(skip).copied().collect();
                 let callee_display = arg_exprs.first().map(|e| compact(*e)).unwrap_or_default();
                 let mut s = state.clone();
+                let yields_before = self.yield_count;
                 // `pcall(store.SetAsync, store, key, value)` is `store:SetAsync(key, value)`.
                 let method = arg_exprs
                     .first()
@@ -1202,6 +1895,10 @@ impl<'a> Analyzer<'a> {
                 };
                 // The call may fail at any point: keep the state of both outcomes.
                 *state = std::mem::take(state).join(s);
+                // A failing `*Async` call still yields before it errors.
+                if self.yield_count != yields_before {
+                    self.note_yield(state);
+                }
                 let mut out = vec![Value::of(Kind::Bool(None))];
                 out.extend(results);
                 out
@@ -1270,21 +1967,45 @@ impl<'a> Analyzer<'a> {
             Builtin::Getmetatable => vec![Value::unknown()],
             Builtin::Print | Builtin::TableSort => Vec::new(),
             Builtin::Spawn => {
-                if display.ends_with("delay") {
+                // `task.delay(5, release)` keeps a consumed state closed. A
+                // delay the client chooses (or none: `task.delay(nil, f)`)
+                // may be zero.
+                let delay = display.ends_with("delay");
+                let duration = arg(0);
+                let zero = args.is_empty()
+                    || matches!(duration.kind, Kind::Nil | Kind::Number(Some(_)))
+                        && !matches!(duration.kind, Kind::Number(Some(n)) if n >= MIN_LIMIT_SECONDS)
+                    || !duration.deep_flows().is_empty();
+                let mut closed: Vec<Rc<str>> = Vec::new();
+                if delay && !zero {
                     if let Some(entry) = self.entry.as_mut() {
                         entry.waits = true;
+                        entry.waited_while.extend(
+                            state
+                                .consumed
+                                .iter()
+                                .filter(|(_, (pp, _))| !*pp)
+                                .map(|(k, _)| k.clone()),
+                        );
                     }
+                    // The delayed function usually reopens the state later
+                    // (a reopen in the handler itself is still immediate).
+                    closed = state.consumed.keys().cloned().collect();
                 }
-                let (index, rest_from) = if display.ends_with("delay") {
-                    (1, 2)
-                } else {
-                    (0, 1)
-                };
+                let (index, rest_from) = if delay { (1, 2) } else { (0, 1) };
                 let callee = arg(index);
                 let rest: Vec<Value<'a>> = args.iter().skip(rest_from).cloned().collect();
+                // Delayed and deferred functions run after the handler: the
+                // tests it made may no longer hold by then.
+                let later = delay || display.ends_with("defer");
                 for func in callee.funcs() {
                     if let Func::Closure(closure) = func {
                         let mut s = state.clone();
+                        s.waited.extend(closed.iter().cloned());
+                        s.paused.extend(closed.iter().cloned());
+                        if later {
+                            s.expects.clear();
+                        }
                         let _ = self.call_closure(&mut s, closure, rest.clone(), None, loc, false);
                     }
                 }
@@ -1293,14 +2014,68 @@ impl<'a> Analyzer<'a> {
                 }
                 vec![Value::unknown()]
             }
+            Builtin::Yield => {
+                let waited = state.waited.clone();
+                self.note_yield(state);
+                state.waited = waited;
+                vec![Value::unknown()]
+            }
             Builtin::Wait => {
+                // `task.wait()` (one frame) or a time the client chooses is
+                // no limit; it still lets other requests run meanwhile.
+                let duration = arg(0);
+                let zero = args.is_empty()
+                    || matches!(duration.kind, Kind::Nil | Kind::Number(Some(_)))
+                        && !matches!(duration.kind, Kind::Number(Some(n)) if n >= MIN_LIMIT_SECONDS)
+                    || !duration.deep_flows().is_empty();
+                if zero {
+                    let waited = state.waited.clone();
+                    self.note_yield(state);
+                    state.waited = waited;
+                    return vec![Value::of(Kind::Number(None))];
+                }
+                let closed: Vec<Rc<str>> = state
+                    .consumed
+                    .iter()
+                    .filter(|(_, (pp, _))| !*pp)
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                state.paused.extend(closed);
                 if let Some(entry) = self.entry.as_mut() {
                     entry.waits = true;
+                    // Only a wait while a global state is closed limits it.
+                    entry.waited_while.extend(
+                        state
+                            .consumed
+                            .iter()
+                            .filter(|(_, (pp, _))| !*pp)
+                            .map(|(k, _)| k.clone()),
+                    );
                 }
+                self.note_yield(state);
                 vec![Value::of(Kind::Number(None))]
             }
             Builtin::TableInsert => {
                 let value = args.last().cloned().unwrap_or_default();
+                if let Some(Expression::Var(list)) = arg_exprs.first().map(|e| unwrap_expr(e)) {
+                    if super::interp::client_written(&value.deep_flows()) {
+                        match list {
+                            Var::Name(_) => {
+                                if let Some(id) = self.table_id(frame, list) {
+                                    if self.peek == 0 && self.quiet == 0 {
+                                        self.client_written.insert(id);
+                                        self.client_epoch += 1;
+                                    }
+                                }
+                            }
+                            Var::Expression(var) => {
+                                let suffixes: Vec<&'a Suffix> = var.suffixes().collect();
+                                self.note_client_write(frame, var.prefix(), &suffixes);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 // `table.insert(profile.Data.Pets, pet)`: a write into saved data.
                 if let (Some(expr), Some(list)) = (arg_exprs.first(), args.first()) {
                     let container =
@@ -1318,7 +2093,11 @@ impl<'a> Analyzer<'a> {
                 }
                 // luau-shield007: `table.insert(busy, player)` marks the player busy.
                 if let (Some(expr), true) = (arg_exprs.first(), value.player_rel) {
-                    let lock = format!("{}@find", compact(unwrap_expr(expr)));
+                    let lock = format!(
+                        "{}@find",
+                        super::refine::declared_text(frame, &compact(unwrap_expr(expr)))
+                    );
+                    self.consume_expect(state, &lock, &value, true, false);
                     self.note_lock_write(&lock, &value, true);
                 }
                 if let Some(expr) = arg_exprs.first() {
@@ -1342,7 +2121,18 @@ impl<'a> Analyzer<'a> {
             Builtin::TableConcat => {
                 vec![derived_with(&arg(0), Kind::Str(None), check::TYPE_STRING)]
             }
-            Builtin::TableRemove => vec![self.element_of(&arg(0))],
+            Builtin::TableRemove => {
+                // luau-shield007: `table.remove(queue, table.find(queue,
+                // player))` takes the player out of the list.
+                if let (Some(list), Some(_)) = (arg_exprs.first(), arg_exprs.get(1)) {
+                    let lock = format!(
+                        "{}@find",
+                        super::refine::declared_text(frame, &compact(unwrap_expr(list)))
+                    );
+                    self.consume_expect(state, &lock, &Value::nil(), true, false);
+                }
+                vec![self.element_of(&arg(0))]
+            }
             Builtin::TableCreate => {
                 let table = Table {
                     dynamic: Some(Box::new(arg(1))),
@@ -1352,8 +2142,17 @@ impl<'a> Analyzer<'a> {
                 vec![Value::of(Kind::Table(Rc::new(table)))]
             }
             Builtin::MathClamp => {
-                let bounds_trusted = !arg(1).is_tainted() && !arg(2).is_tainted();
-                let add = check::TYPE_NUMBER | if bounds_trusted { check::BOUNDS } else { 0 };
+                // A bound that is a parameter of a summarised function counts
+                // (the real argument is checked when the summary is used).
+                let bounds_trusted = trusted_bound(&arg(1)) && trusted_bound(&arg(2));
+                let relative = probe_bound(&arg(1)) || probe_bound(&arg(2));
+                let add = check::TYPE_NUMBER
+                    | if bounds_trusted { check::BOUNDS } else { 0 }
+                    | if bounds_trusted && relative {
+                        check::RELATIVE
+                    } else {
+                        0
+                    };
                 let mut v = derived_with(&arg(0), Kind::Number(None), add);
                 v.add_flows(arg(1).derived().flows);
                 v.add_flows(arg(2).derived().flows);
@@ -1366,9 +2165,17 @@ impl<'a> Analyzer<'a> {
                     check::LOWER
                 };
                 let mut v = Value::of(Kind::Number(None));
-                let any_trusted = args.iter().any(|a| !a.is_tainted());
+                let any_trusted = args.iter().any(trusted_bound);
+                let relative =
+                    !args.iter().any(|a| !a.is_tainted()) && args.iter().any(probe_bound);
                 for a in &args {
-                    let add = check::TYPE_NUMBER | if any_trusted { bound } else { 0 };
+                    let add = check::TYPE_NUMBER
+                        | if any_trusted { bound } else { 0 }
+                        | if any_trusted && relative {
+                            check::RELATIVE
+                        } else {
+                            0
+                        };
                     v.add_flows(derived_with(a, Kind::Unknown, add).flows);
                 }
                 vec![v]
@@ -1409,11 +2216,17 @@ impl<'a> Analyzer<'a> {
                 for a in &args {
                     v.add_flows(a.derived().flows);
                 }
+                // `string.match(text, "(%-?%d+)")`: only digits come out, so
+                // `tonumber` of the result is never NaN.
+                let numeric = arg(1).str_const().is_some_and(sinks::numeric_pattern);
+                if builtin == Builtin::StringMatch && numeric {
+                    v.add_checks(check::NAN_SAFE);
+                }
                 // `string.match` / `string.find` return one value per capture.
                 vec![v.clone(), v.clone(), v.clone(), v]
             }
             Builtin::InstanceNew => {
-                self.note_expensive("`Instance.new`".to_string());
+                self.note_expensive(frame, state, "`Instance.new`".to_string());
                 let class = arg(0).str_const().map(str::to_string).unwrap_or_default();
                 vec![Value::obj(
                     ObjClass::Unknown,
@@ -1560,10 +2373,25 @@ impl<'a> Analyzer<'a> {
         let display = format!("{recv_display}:{name}");
         self.note_rate_limit_name(&display);
         if name.ends_with("Async") {
-            self.note_expensive(format!("`{display}()`"));
+            self.note_expensive(frame, state, format!("`{display}()`"));
+            self.note_yield(state);
+        }
+        // Promises (`:await()`, `:expect()`) and BindableFunctions yield too.
+        if matches!(
+            name,
+            "InvokeClient"
+                | "Wait"
+                | "WaitForChild"
+                | "Invoke"
+                | "await"
+                | "expect"
+                | "awaitStatus"
+                | "awaitValue"
+        ) {
+            self.note_yield(state);
         }
         if name == "Clone" {
-            self.note_expensive(format!("`{display}()`"));
+            self.note_expensive(frame, state, format!("`{display}()`"));
         }
         if name == "GetServerTimeNow" {
             self.note_rate_limit();
@@ -1576,6 +2404,36 @@ impl<'a> Analyzer<'a> {
                 matches!(unwrap_expr(e), Expression::FunctionCall(_))
                     && has_rate_limit_word(&compact(*e))
             });
+            // luau-shield007: a function connected to a per-frame signal
+            // inside a handler (`Heartbeat:Once(release)`) runs right after
+            // it: what it reopens is reopened at once.
+            let per_frame = [
+                ".Heartbeat",
+                ".Stepped",
+                ".RenderStepped",
+                ".PreSimulation",
+                ".PostSimulation",
+                ".PreAnimation",
+                ".PreRender",
+            ]
+            .iter()
+            .any(|s| recv_display.ends_with(s));
+            if per_frame && self.entry.is_some() && self.peek == 0 {
+                for func in &funcs {
+                    if let Func::Closure(closure) = func {
+                        let mut s = state.clone();
+                        s.expects.clear();
+                        let _ = self.call_closure(
+                            &mut s,
+                            closure.clone(),
+                            vec![Value::of(Kind::Number(None))],
+                            None,
+                            loc,
+                            false,
+                        );
+                    }
+                }
+            }
             let kind = if let Some(remote) = recv_display.strip_suffix(".OnServerEvent") {
                 Some(EntryKind::Remote {
                     event: "OnServerEvent",
@@ -1587,7 +2445,26 @@ impl<'a> Analyzer<'a> {
                     event: "Connect",
                     remote: recv_display.to_string(),
                 })
-            } else if recv_display.ends_with(".Chatted") {
+            } else if let Some(speaker) = recv_display.strip_suffix(".Chatted") {
+                // Admin messages only when the player who passed the
+                // permission check is the one chatting (not the target of
+                // an admin tool, nor every player).
+                if state.admin.is_some()
+                    && (self.guard_sender.is_none() || frame.lookup(speaker) != self.guard_sender)
+                {
+                    let mut public = state.clone();
+                    public.admin = None;
+                    let top_level = frame.closure.is_none();
+                    self.register_entry(
+                        funcs,
+                        EntryKind::Chat,
+                        loc,
+                        &public,
+                        rate_limited,
+                        top_level,
+                    );
+                    return vec![Value::unknown()];
+                }
                 Some(EntryKind::Chat)
             } else if recv_display.ends_with(".PlayerAdded") {
                 Some(EntryKind::Callback { player_param: true })
@@ -1685,6 +2562,13 @@ impl<'a> Analyzer<'a> {
                     for arg in &args {
                         result.add_flows(arg.derived().flows);
                     }
+                    let numeric = args
+                        .first()
+                        .and_then(Value::str_const)
+                        .is_some_and(sinks::numeric_pattern);
+                    if name == "match" && numeric {
+                        result.add_checks(check::NAN_SAFE);
+                    }
                     return vec![result.clone(), result.clone(), result.clone(), result];
                 }
             } else {
@@ -1697,8 +2581,15 @@ impl<'a> Analyzer<'a> {
             for arg in &args {
                 for func in arg.funcs() {
                     if let Func::Closure(closure) = func {
-                        if self.inlined_callbacks.insert(closure.key()) {
+                        if self.first_inline(closure.key(), state) {
                             let mut s = state.clone();
+                            // Promise callbacks run later, after a yield.
+                            if matches!(
+                                name,
+                                "andThen" | "andThenCall" | "finally" | "catch" | "andThenReturn"
+                            ) {
+                                s.expects.clear();
+                            }
                             let _ =
                                 self.call_closure(&mut s, closure, Vec::new(), None, loc, false);
                         }
@@ -1721,7 +2612,11 @@ impl<'a> Analyzer<'a> {
         }
         result.player_rel = recv.player_rel;
         result.path = Some(Rc::from(format!("{display}()").as_str()));
-        vec![result]
+        let mut results = vec![result];
+        if !recv.is_tainted() {
+            mark_via(&mut results, &display, false);
+        }
+        results
     }
 
     /// The method `name` when exactly one table returned by a module that
@@ -1784,13 +2679,15 @@ impl<'a> Analyzer<'a> {
                         .collect();
                     // Plain functions stored in a table and called with `:`
                     // receive the table as first argument.
+                    let clients: Vec<bool> = args[1..].iter().map(client_bound).collect();
                     let r =
                         self.call_closure(&mut s, closure.clone(), args.clone(), None, loc, false);
                     if !tainted_targets.is_empty() && !s.dead {
-                        if let Some(summary) = self.summary_of(closure, &s) {
+                        if let Some(summary) = self.summary_of(closure, &s, false) {
                             for (i, target) in tainted_targets {
                                 if let Some(checks) = summary.exit.get(i + 1) {
-                                    s.add_checks(&target, *checks);
+                                    let checks = relative_checks(&clients, i, *checks);
+                                    s.add_checks(&target, checks);
                                 }
                             }
                         }
@@ -1929,7 +2826,7 @@ impl<'a> Analyzer<'a> {
                 for flow in arg(0).flows {
                     v.add_flows([Flow {
                         raw: true,
-                        checks: flow.checks & check::TRUSTED,
+                        checks: flow.checks & check::KEPT,
                         ..flow
                     }]);
                 }
@@ -2024,7 +2921,7 @@ fn length_of<'a>(value: &Value<'a>) -> Value<'a> {
     let mut v = Value::of(Kind::Number(None));
     for flow in value.deep_flows() {
         let mut checks =
-            check::TYPE_NUMBER | check::LOWER | check::NAN_SAFE | (flow.checks & check::TRUSTED);
+            check::TYPE_NUMBER | check::LOWER | check::NAN_SAFE | (flow.checks & check::KEPT);
         if flow.any(check::LENGTH) {
             checks |= check::UPPER;
         }

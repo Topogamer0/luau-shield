@@ -30,7 +30,17 @@ struct RawConfig {
     #[serde(default)]
     sources: Vec<RawSource>,
     #[serde(default)]
+    guards: RawGuards,
+    #[serde(default)]
     explain: RawExplain,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct RawGuards {
+    #[serde(default)]
+    functions: Vec<String>,
+    defaults: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -106,7 +116,56 @@ impl NamePattern {
                 .zip(path)
                 .all(|(pattern, name)| pattern == "*" || pattern == name)
     }
+
+    /// Like `matches`, but a single name (`isAdmin`) also matches the last
+    /// segment of a longer path (`Admins.isAdmin`, `self:isAdmin`).
+    pub fn matches_name(&self, path: &[String]) -> bool {
+        match (self.segments.as_slice(), path.last()) {
+            ([single], Some(last)) => single == last,
+            _ => self.matches(path),
+        }
+    }
 }
+
+/// Words in the name of a module whose built-in guard names are trusted
+/// (`Admins.isAdmin`, `PermissionService:hasPermission`, `Ranks.isStaff`).
+const GUARD_MODULE_WORDS: &[&str] = &[
+    "admin",
+    "perm",
+    "staff",
+    "moder",
+    "rank",
+    "role",
+    "auth",
+    "access",
+    "whitelist",
+    "command",
+    "cmd",
+    "privilege",
+];
+
+/// Function names that are permission checks by default: `isAdmin`,
+/// `Permissions:hasPermission(player, ...)`, `is_owner`... Compared without
+/// case and underscores.
+const DEFAULT_GUARDS: &[&str] = &[
+    "isadmin",
+    "issuperadmin",
+    "isheadadmin",
+    "isgameowner",
+    "iscreator",
+    "ismoderator",
+    "ismod",
+    "isstaff",
+    "isdeveloper",
+    "isdev",
+    "hasadmin",
+    "hasadminrights",
+    "hasadminaccess",
+    "hasadminpermission",
+    "hasadminpermissions",
+    "haspermission",
+    "haspermissions",
+];
 
 #[derive(Clone, Debug)]
 pub struct Sanitizer {
@@ -151,6 +210,10 @@ pub struct Config {
     pub sanitizers: Vec<Sanitizer>,
     pub sinks: Vec<CustomSink>,
     pub sources: Vec<CustomSource>,
+    /// Permission checks configured in `[guards] functions`.
+    pub guards: Vec<NamePattern>,
+    /// Also trust the built-in guard names (`isAdmin`, `hasPermission`...).
+    pub default_guards: bool,
     pub explain_model: String,
     pub explain_timeout_seconds: u64,
     /// Where the configuration was loaded from, if anywhere.
@@ -187,6 +250,8 @@ impl Default for Config {
                 pattern: NamePattern::new("*.Client.*"),
                 trusted_parameters: 1,
             }],
+            guards: Vec::new(),
+            default_guards: true,
             explain_model: "qwen2.5-coder:7b".to_string(),
             explain_timeout_seconds: 60,
             source_file: None,
@@ -205,6 +270,28 @@ pub fn parse_fail_on(text: &str) -> Result<Option<Severity>, String> {
 }
 
 impl Config {
+    /// Is the function at `path` (`Admins.isAdmin`) a permission check?
+    /// A built-in name called on a receiver only counts when the receiver is
+    /// named like a permission module (`Admins`, `PermissionService`,
+    /// `Ranks`...): `clan:isModerator(player)` or `plot:hasPermission(player,
+    /// "Build")` are about that clan or plot, not about who the player is.
+    pub fn is_guard(&self, path: &[String]) -> bool {
+        if self.guards.iter().any(|g| g.matches_name(path)) {
+            return true;
+        }
+        let Some((name, receiver)) = path.split_last() else {
+            return false;
+        };
+        let name = name.to_ascii_lowercase().replace('_', "");
+        self.default_guards
+            && DEFAULT_GUARDS.contains(&name.as_str())
+            && (receiver.is_empty()
+                || receiver.iter().any(|segment| {
+                    let segment = segment.to_ascii_lowercase();
+                    GUARD_MODULE_WORDS.iter().any(|w| segment.contains(w))
+                }))
+    }
+
     /// Finds `luau-shield.toml` in `start` (or its directory) or any ancestor.
     pub fn discover(start: &Path) -> Option<PathBuf> {
         let start = if start.is_file() {
@@ -305,6 +392,15 @@ impl Config {
                     }
                 }
             }
+        }
+        config.guards = raw
+            .guards
+            .functions
+            .iter()
+            .map(|f| NamePattern::new(f))
+            .collect();
+        if let Some(defaults) = raw.guards.defaults {
+            config.default_guards = defaults;
         }
         for sanitizer in raw.sanitizers {
             let checks = match sanitizer.checks {

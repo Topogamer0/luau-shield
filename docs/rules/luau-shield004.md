@@ -202,7 +202,10 @@ What is **not** a check for luau-shield004:
   `game:GetService("Players"):ClearAllChildren()`.
 - **Player / admin / ownership checks.** `player.UserId == OWNER_ID`,
   a group-rank check, `x:IsDescendantOf(player.Character)` — these gate *who*
-  calls, not *what* runs. The value is still unconstrained.
+  calls, not *what* runs. The value is still unconstrained. Unlike the other
+  rules, luau-shield004 findings are never downgraded to `info` by a
+  [permission guard](../configuration.md#guards) (`isAdmin(player)`): a
+  stolen admin account or a mistyped asset id would run arbitrary code.
 - **"Sandboxing" at runtime.** `pcall`, `setfenv(chunk, {...})` and similar do
   not make the compiled code safe; luau-shield004 still reports the `loadstring`.
 

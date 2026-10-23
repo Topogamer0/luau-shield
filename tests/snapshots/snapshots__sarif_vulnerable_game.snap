@@ -1588,7 +1588,7 @@ expression: sarif
             }
           ],
           "message": {
-            "text": "the `Remotes.BuyItem.OnServerEvent` handler calls `template:Clone()` on every request, with no rate limit. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
+            "text": "the `Remotes.BuyItem.OnServerEvent` handler calls `template:Clone()` when a condition in `giveTool` holds, with no rate limit: check that a client cannot make it hold on every request. Add a per-player cooldown (store `os.clock()` per player and return early when called too often), a busy flag while the previous request is running, or a shared rate limiter module."
           },
           "partialFingerprints": {
             "luauShield/v1": "355c50412cfe8bd7"
@@ -2016,8 +2016,8 @@ expression: sarif
               }
             }
           ],
-          "semanticVersion": "0.1.0",
-          "version": "0.1.0"
+          "semanticVersion": "0.2.0",
+          "version": "0.2.0"
         }
       }
     }

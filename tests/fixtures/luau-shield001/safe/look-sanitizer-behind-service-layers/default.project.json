@@ -1,0 +1,1 @@
+{"name":"avatar-game","tree":{"$className":"DataModel","ServerScriptService":{"$path":"src/server"},"ReplicatedStorage":{"Shared":{"$path":"src/shared"}}}}

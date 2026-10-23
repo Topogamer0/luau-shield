@@ -245,9 +245,139 @@ pub fn is_string_method(name: &str) -> bool {
     )
 }
 
+/// Whatever `pattern` returns (its captures, or the whole match when it has
+/// none) is made only of digits, signs and dots, as in `"(%-?%d+)"` or
+/// `"^%d+%.?%d*$"`: `tonumber` of it can never be NaN.
+pub fn numeric_pattern(pattern: &str) -> bool {
+    let chars: Vec<char> = pattern.chars().collect();
+    let has_captures = chars
+        .iter()
+        .enumerate()
+        .any(|(i, c)| *c == '(' && (i == 0 || chars[i - 1] != '%'));
+    let mut depth = 0usize;
+    let mut items = 0usize;
+    let mut previous_item = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let relevant = !has_captures || depth > 0;
+        // One item of the pattern: is it numeric?
+        let numeric = match c {
+            '^' if i == 0 => {
+                i += 1;
+                continue;
+            }
+            '$' if i + 1 == chars.len() => {
+                i += 1;
+                continue;
+            }
+            '(' => {
+                depth += 1;
+                previous_item = false;
+                i += 1;
+                continue;
+            }
+            ')' => {
+                depth = depth.saturating_sub(1);
+                previous_item = false;
+                i += 1;
+                continue;
+            }
+            '*' | '+' | '?' if previous_item => {
+                previous_item = false;
+                i += 1;
+                continue;
+            }
+            '-' if previous_item => {
+                previous_item = false;
+                i += 1;
+                continue;
+            }
+            '%' => {
+                let Some(&class) = chars.get(i + 1) else {
+                    return false;
+                };
+                i += 2;
+                matches!(class, 'd' | '-' | '+' | '.')
+            }
+            '[' => {
+                let Some(end) = (i + 1..chars.len()).find(|&j| chars[j] == ']' && j > i + 1) else {
+                    return false;
+                };
+                let set: String = chars[i + 1..end].iter().collect();
+                i = end + 1;
+                !set.starts_with('^') && numeric_set(&set)
+            }
+            '0'..='9' | '-' | '+' => {
+                i += 1;
+                true
+            }
+            _ => {
+                i += 1;
+                false
+            }
+        };
+        previous_item = true;
+        if relevant {
+            if !numeric {
+                return false;
+            }
+            items += 1;
+        }
+    }
+    items > 0
+}
+
+/// The contents of a `[...]` set: digits, `%d`, `0-9`, signs and dots.
+fn numeric_set(set: &str) -> bool {
+    let chars: Vec<char> = set.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '%' => {
+                if !matches!(chars.get(i + 1), Some('d' | '-' | '+' | '.')) {
+                    return false;
+                }
+                i += 2;
+            }
+            '0'..='9' | '.' | '+' | '-' => i += 1,
+            _ => return false,
+        }
+    }
+    !chars.is_empty()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numeric_patterns() {
+        for p in [
+            "(%-?%d+)",
+            "^%d+$",
+            "%d+",
+            "^(%d+%.?%d*)$",
+            "give (%d+)",
+            "[%d%.]+",
+            "^[0-9]+$",
+            "x=(%-?[0-9]+)",
+        ] {
+            assert!(numeric_pattern(p), "{p}");
+        }
+        for p in [
+            "(.+)",
+            "%w+",
+            "(%a+) (%d+)",
+            "^(%S+)$",
+            "[^%d]+",
+            "%d+e%d+",
+            "",
+            "()",
+        ] {
+            assert!(!numeric_pattern(p), "{p}");
+        }
+    }
     use crate::analysis::value::{Source, SourceKind};
     use crate::finding::{Loc, Span};
     use std::rc::Rc;
